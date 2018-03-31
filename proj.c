@@ -31,27 +31,26 @@ volatile uint32_t msTicks;
  */
 int currentState = 0;
 
+/////////////////////FLAGS//////////////////////////////
 int sw3 = 0;
-
+int countdownFlag = 0;
 int tempWarning = 0;
 int offCourseWarning = 0;
 int obstacleWarning = 0;
 
-// values for acc
-int8_t x = 0;
-int8_t y = 0;
-int8_t z = 0;
-
-// offset values for acc
-int32_t xoff = 0;
-int32_t yoff = 0;
+/////////////////////FOR COUNTDOWN///////////////////////
+uint32_t countdownTimer = 0;
+int countdownCounter = 15;
 
 //string values for modes
 char STRING_STATIONARY[] = "STATIONARY";
 char STRING_LAUNCH[] = "LAUNCH";
 char STRING_RETURN[] = "RETURN";
+char DUMMY_TEMP[] = "69 degrees";
 
 void SysTick_Handler(void) { msTicks++; }
+
+uint32_t getTicks(void){ return msTicks; }
 
 // EINT3 Interrupt Handler
 void EINT3_IRQHandler(void)
@@ -63,8 +62,6 @@ void EINT3_IRQHandler(void)
         LPC_GPIOINT->IO2IntClr = 1<<10;
 	}
 }
-
-uint32_t getTicks(void){ return msTicks; }
 
 static void init_ssp(void)
 {
@@ -142,74 +139,117 @@ static void setup(void) {
     NVIC_EnableIRQ(EINT3_IRQn);
 }
 
-static void toggleMode() {
-	if (currentState == 0) {
-		//begin countdown
+uint32_t get7segChar(int number) {
+	uint32_t toReturn = 0;
+	switch(number) {
+	case 15:
+		toReturn = 0x71;
+		break;
+	case 14:
+		toReturn = 0x70;
+		break;
+	case 13:
+		toReturn = 0xA8;
+		break;
+	case 12:
+		toReturn = 0x74;
+		break;
+	case 11:
+		toReturn = 0x38;
+		break;
+	case 10:
+		toReturn = 0x21;
+		break;
+	case 9:
+		toReturn = 0x22;
+		break;
+	case 8:
+		toReturn = 0x20;
+		break;
+	case 7:
+		toReturn = 0xA7;
+		break;
+	case 6:
+		toReturn = 0x30;
+		break;
+	case 5:
+		toReturn = 0x32;
+		break;
+	case 4:
+		toReturn = 0x2B;
+		break;
+	case 3:
+		toReturn = 0xA2;
+		break;
+	case 2:
+		toReturn = 0xE0;
+		break;
+	case 1:
+		toReturn = 0xAF;
+		break;
+	case 0:
+		toReturn = 0x24;
+		break;
 	}
+	return toReturn;
 }
 
-static void readTemp() {
-	uint32_t temp_value = temp_read();
-	printf("%2.2f degrees\n",temp_value/10.0);
+void stationaryMode(void) {
+	oled_putString(0, 0, STRING_STATIONARY, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+	oled_putString(0, 10, DUMMY_TEMP, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 
-	char temp_arr[10];
-	sprintf(temp_arr, "%2.2f", temp_value/10.0);
+	//if sw3 has been pressed, begin countdown
+	if (countdownFlag == 1) {
+		uint32_t currentTime = getTicks();
+		//1 second has passed
+		if ((currentTime - countdownTimer) > 1000) {
+			countdownTimer = getTicks();
+			countdownCounter -= 1;
+			led7seg_setChar(get7segChar(countdownCounter), 1);
+			//countdown successfully reach 0
+			if (countdownCounter == 0) {
+				countdownFlag = 0;
+				currentState = 1;  //toggle to launch mode
+				oled_clearScreen(OLED_COLOR_BLACK);
+			}
+		}
+	} else 	led7seg_setChar(get7segChar(countdownCounter), 1);
 
-	oled_putString(0, 10, temp_arr, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+}
+
+void launchMode(void) {
+	oled_putString(0, 0, STRING_LAUNCH, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+	led7seg_setChar(get7segChar(countdownCounter), 1);
+}
+
+static void toggleMode(void) {
+	if (currentState==0) {
+		if (sw3 == 1) {
+			countdownFlag = 1;
+			countdownTimer = getTicks(); //begin the countdown timer
+			sw3 = 0; //reset the flag
+		}
+		stationaryMode();
+	}
+	if (currentState == 1) {
+		launchMode();
+	}
 }
 
 int main (void) {
 
 	setup();
-    /*
-     * Declaring variables to use
-     */
-
-
-    /*
-     * Assume base board in zero-g position when reading first value.
-     */
-    acc_read(&x, &y, &z);
-    xoff = 0-x;
-    yoff = 0-y;
 
     oled_clearScreen(OLED_COLOR_BLACK);
-
-    while (1)
-    {
-    	acc_read(&x, &y, &z);
-        x = x+xoff;
-        y = y+yoff;
-
-        char Xvalue[5];
-        char Yvalue[5];
-
-        sprintf(Xvalue, "%d", x);
-        sprintf(Yvalue, "%d", y);
-
-        char acc_val[40];
-        strcpy(acc_val, Xvalue);
-        strcat(acc_val, " ");
-        strcat(acc_val, Yvalue);
-        strcat(acc_val, "\0");
-
-        printf("%s\n", acc_val);
-
-    	oled_putString(0, 0, STRING_STATIONARY, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-
-    	readTemp();
-
-    	if (currentState == 0) led7seg_setChar(0x71, 1);
+    while(1) {
+    	toggleMode();
     }
-
-
 }
 
 void check_failed(uint8_t *file, uint32_t line)
 {
 	/* User can add his own implementation to report the file name and line number,
 	 ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
-
 	/* Infinite loop */
 	while(1);
 }

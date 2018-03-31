@@ -1,0 +1,77 @@
+#include "lpc17xx_pinsel.h"
+#include "lpc17xx_gpio.h"
+#include "lpc17xx_timer.h"
+
+#include "temp.h"
+
+volatile uint32_t msTicks;
+int tempFlag = 0;
+
+void SysTick_Handler(void) {
+	msTicks++;
+}
+
+uint32_t getTicks(void){
+	return msTicks;
+}
+
+// EINT3 Interrupt Handler
+void EINT3_IRQHandler(void)
+{
+	// Determine whether GPIO Interrupt P0.2 has occurred
+	if ((LPC_GPIOINT->IO0IntStatF>>2)& 0x1)
+	{
+        tempFlag = 1;
+        LPC_GPIOINT->IO0IntClr = 1<<2;
+	}
+}
+
+//interrupt is called on a falling edge for GPIO_INT
+//Temp sensor formula = T(C) = Period (us) / scalar - 273.15 K
+static int32_t myReadTemp() {
+    uint32_t timeOfLastInt = 0;
+    uint32_t period = 0;
+
+    uint8_t state = 0;
+
+
+    //
+    if (state == 0) {
+    	timeOfLastInt = getTicks();
+
+    } else {
+    	period = getTicks();
+    }
+    state = !state; //reflect new state.
+
+    if (period > timeOfLastInt) {
+    	period = period-timeOfLastInt;
+    }
+    else {
+  	period = (0xFFFFFFFF - timeOfLastInt + 1) + period;
+    }
+
+    printf("%f\n", period);
+    //return ( (2*1000*period)/2 - 2731 );
+    return period * 1000;
+}
+
+int main (void) {
+
+	SysTick_Config(SystemCoreClock/1000);
+	uint32_t temp_value;
+
+    NVIC_ClearPendingIRQ(EINT3_IRQn);
+    LPC_GPIOINT->IO0IntEnF |= 1<<2; // Enable GPIO Interrupt P0.2
+    NVIC_EnableIRQ(EINT3_IRQn);
+
+    while(1) {
+    	if(tempFlag == 1) {
+    		tempFlag = 0;
+    		temp_value = myReadTemp();
+    		printf("temp int %2.2f \n", temp_value);
+    	}
+    }
+
+}
+
