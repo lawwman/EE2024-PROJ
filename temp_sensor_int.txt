@@ -1,0 +1,48 @@
+#include "lpc17xx_pinsel.h"
+#include "lpc17xx_gpio.h"
+#include "lpc17xx_timer.h"
+
+#include "temp.h"
+
+volatile uint32_t msTicks;
+int tempFlag = 0;
+
+void SysTick_Handler(void) {
+	msTicks++;
+}
+
+uint32_t getTicks(void){
+	return msTicks;
+}
+
+// EINT3 Interrupt Handler
+void EINT3_IRQHandler(void)
+{
+	// Determine whether GPIO Interrupt P0.2 has occurred
+	if ((LPC_GPIOINT->IO0IntStatF>>2)& 0x1)
+	{
+        tempFlag = 1;
+        LPC_GPIOINT->IO0IntClr = 1<<2;
+	}
+}
+
+int main (void) {
+
+	SysTick_Config(SystemCoreClock/1000);
+	temp_init(getTicks);
+
+    NVIC_ClearPendingIRQ(EINT3_IRQn);
+    LPC_GPIOINT->IO0IntEnF |= 1<<2; // Enable GPIO Interrupt P0.2
+    NVIC_EnableIRQ(EINT3_IRQn);
+
+    while (1)
+    {
+    	if (tempFlag == 1) {
+    		tempFlag = 0;
+    		printf("temp int\n");
+        	//printf("%2.2f degrees\n",temp_value/10.0);
+    	}
+
+    }
+}
+

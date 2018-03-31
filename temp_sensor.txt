@@ -1,0 +1,30 @@
+#include "lpc17xx_pinsel.h"
+#include "lpc17xx_gpio.h"
+#include "lpc17xx_timer.h"
+
+#include "temp.h"
+
+volatile uint32_t msTicks;
+
+void SysTick_Handler(void) {
+	msTicks++;
+}
+
+uint32_t getTicks(void){
+	return msTicks;
+}
+
+int main (void) {
+
+	SysTick_Config(SystemCoreClock/1000);
+	temp_init(getTicks);
+	uint32_t temp_value;
+
+    while (1)
+    {
+    	temp_value = temp_read();
+    	printf("%2.2f degrees\n",temp_value/10.0);
+    	Timer0_Wait(1);
+    }
+}
+
