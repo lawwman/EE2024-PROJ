@@ -1,0 +1,57 @@
+/*****************************************************************************
+ *   A demo example using several of the peripherals on the base board
+ *
+ *   Copyright(C) 2011, EE2024
+ *   All rights reserved.
+ *
+ ******************************************************************************/
+
+#include <stdio.h>
+#include "lpc17xx_pinsel.h"
+#include "lpc17xx_gpio.h"
+#include "lpc17xx_timer.h"
+
+// EINT0 Interrupt Handler
+void EINT0_IRQHandler(void)
+{
+	// Determine whether GPIO Interrupt P2.10 has occurred
+	if ((LPC_GPIOINT->IO2IntStatF>>10)& 0x1)
+	{
+        printf("GPIO Interrupt 2.10\n");
+        LPC_GPIOINT->IO2IntClr = 1<<10;
+	}
+}
+
+static void init_GPIO(void)
+{
+	PINSEL_CFG_Type PinCfg;
+	PinCfg.Funcnum = 1;
+	PinCfg.OpenDrain = 0;
+	PinCfg.Pinmode = 0;
+	PinCfg.Portnum = 2;
+	PinCfg.Pinnum = 10;
+	PINSEL_ConfigPin(&PinCfg);
+    GPIO_SetDir(1, 1<<10, 0);
+}
+
+int main (void) {
+
+	NVIC_ClearPendingIRQ(EINT0_IRQn);
+    // Enable GPIO Interrupt P2.10
+    LPC_GPIOINT->IO2IntEnF |= 1<<10;
+
+    // Enable EINT0 interrupt
+    NVIC_EnableIRQ(EINT0_IRQn);
+
+
+}
+
+void check_failed(uint8_t *file, uint32_t line)
+{
+	/* User can add his own implementation to report the file name and line number,
+	 ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+
+	/* Infinite loop */
+	while(1);
+}
+
