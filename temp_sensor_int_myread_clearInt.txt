@@ -1,0 +1,304 @@
+#include "lpc17xx_pinsel.h"
+#include "lpc17xx_gpio.h"
+#include "lpc17xx_timer.h"
+#include "lpc17xx_ssp.h"
+
+#include "temp.h"
+#include "oled.h"
+
+static volatile uint32_t msTicks;
+static int tempFlag = 0;
+static int clearWarning = 0;
+
+char warning#include "lpc17xx_pinsel.h"
+#include "lpc17xx_gpio.h"
+#include "lpc17xx_timer.h"
+#include "lpc17xx_ssp.h"
+
+#include "temp.h"
+#include "oled.h"
+
+static volatile uint32_t msTicks;
+static int tempFlag = 0;
+static int clearWarning = 0;
+
+char warningMsg[] = "TEMP WARNING";
+
+static uint32_t t1 = 0;
+static uint32_t t2 = 0;
+static uint8_t state = 0;
+static uint32_t count = 0;
+static uint32_t period = 0;
+
+static void init_ssp(void)
+{
+	SSP_CFG_Type SSP_ConfigStruct;
+	PINSEL_CFG_Type PinCfg;
+
+	/*
+	 * Initialize SPI pin connect
+	 * P0.7 - SCK;
+	 * P0.8 - MISO
+	 * P0.9 - MOSI
+	 * P2.2 - SSEL - used as GPIO
+	 */
+	PinCfg.Funcnum = 2;
+	PinCfg.OpenDrain = 0;
+	PinCfg.Pinmode = 0;
+	PinCfg.Portnum = 0;
+	PinCfg.Pinnum = 7;
+	PINSEL_ConfigPin(&PinCfg);
+	PinCfg.Pinnum = 8;
+	PINSEL_ConfigPin(&PinCfg);
+	PinCfg.Pinnum = 9;
+	PINSEL_ConfigPin(&PinCfg);
+	PinCfg.Funcnum = 0;
+	PinCfg.Portnum = 2;
+	PinCfg.Pinnum = 2;
+	PINSEL_ConfigPin(&PinCfg);
+
+	SSP_ConfigStructInit(&SSP_ConfigStruct);
+
+	// Initialize SSP peripheral with parameter given in structure above
+	SSP_Init(LPC_SSP1, &SSP_ConfigStruct);
+
+	// Enable SSP peripheral
+	SSP_Cmd(LPC_SSP1, ENABLE);
+
+}
+
+void SysTick_Handler(void) {
+	msTicks++;
+}
+
+uint32_t getTicks(void){
+	return msTicks;
+}
+
+// EINT3 Interrupt Handler
+void EINT3_IRQHandler(void)
+{
+	// Determine whether GPIO Interrupt P0.2 has occurred
+	if ((LPC_GPIOINT->IO0IntStatF>>2)& 0x1)
+	{
+		//tempFlag = 1;
+		myReadTemp(); //readTemp here produces a more accurate result
+        LPC_GPIOINT->IO0IntClr = 1<<2;
+	}
+}
+
+void myReadTemp(void) {
+    if (state == 0) {
+    	t1 = getTicks();
+    } else {
+    	t2 = getTicks();
+    }
+    state = !state;
+
+    if (t2 > t1) {
+        period += t2-t1;
+    }
+    else {
+    	period += t1-t2;
+    }
+    count++;
+    if (count > 340) {
+        count = 0;
+    	char temp_char[40];
+        int32_t numtest = ( (1000 * period)/340 - 2731 );
+    	sprintf(temp_char, "%.2f", numtest/10.0);
+    	oled_putString(0, 0, temp_char, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+    	period = 0;
+    	if (numtest/10.0 >= 33.60) {
+    		tempFlag = 1;
+    	}
+    }
+}
+
+static void init_GPIO(void)
+{
+	PINSEL_CFG_Type PinCfg;
+	PinCfg.Funcnum = 0;
+	PinCfg.OpenDrain = 0;
+	PinCfg.Pinmode = 0;
+	PinCfg.Portnum = 1;
+	PinCfg.Pinnum = 31;
+	PINSEL_ConfigPin(&PinCfg);
+    GPIO_SetDir(1, 1<<31, 0);
+}
+
+int main (void) {
+	init_ssp();
+    oled_init();
+    init_GPIO();
+    uint8_t btn1 = 1;
+
+	SysTick_Config(SystemCoreClock/1000);
+	temp_init(getTicks);
+
+    NVIC_ClearPendingIRQ(EINT3_IRQn);
+    NVIC_SetPriority(EINT3_IRQn, 0x40); //testing it out...not sure
+    LPC_GPIOINT->IO0IntEnF |= 1<<2; // Enable GPIO Interrupt P0.2
+    NVIC_EnableIRQ(EINT3_IRQn);
+
+    oled_clearScreen(OLED_COLOR_BLACK);
+
+    while (1)
+    {
+    	btn1 = (GPIO_ReadValue(1) >> 31) & 0x01;
+
+
+    	if (tempFlag == 1) {
+    		tempFlag = 0;
+    		oled_putString(0, 10, warningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+    		//myReadTemp(); //not good to put readTemp here. Reading is off.
+    	}
+    	if (btn1 == 0) {
+    		clearWarning = 1;
+    	}
+    	if (clearWarning == 1) {
+    		clearWarning = 0;
+    		oled_clearScreen(OLED_COLOR_BLACK);
+    	}
+    }
+}
+
+Msg[] = "TEMP WARNING";
+
+static uint32_t t1 = 0;
+static uint32_t t2 = 0;
+static uint8_t state = 0;
+static uint32_t count = 0;
+static uint32_t period = 0;
+
+static void init_ssp(void)
+{
+	SSP_CFG_Type SSP_ConfigStruct;
+	PINSEL_CFG_Type PinCfg;
+
+	/*
+	 * Initialize SPI pin connect
+	 * P0.7 - SCK;
+	 * P0.8 - MISO
+	 * P0.9 - MOSI
+	 * P2.2 - SSEL - used as GPIO
+	 */
+	PinCfg.Funcnum = 2;
+	PinCfg.OpenDrain = 0;
+	PinCfg.Pinmode = 0;
+	PinCfg.Portnum = 0;
+	PinCfg.Pinnum = 7;
+	PINSEL_ConfigPin(&PinCfg);
+	PinCfg.Pinnum = 8;
+	PINSEL_ConfigPin(&PinCfg);
+	PinCfg.Pinnum = 9;
+	PINSEL_ConfigPin(&PinCfg);
+	PinCfg.Funcnum = 0;
+	PinCfg.Portnum = 2;
+	PinCfg.Pinnum = 2;
+	PINSEL_ConfigPin(&PinCfg);
+
+	SSP_ConfigStructInit(&SSP_ConfigStruct);
+
+	// Initialize SSP peripheral with parameter given in structure above
+	SSP_Init(LPC_SSP1, &SSP_ConfigStruct);
+
+	// Enable SSP peripheral
+	SSP_Cmd(LPC_SSP1, ENABLE);
+
+}
+
+void SysTick_Handler(void) {
+	msTicks++;
+}
+
+uint32_t getTicks(void){
+	return msTicks;
+}
+
+// EINT3 Interrupt Handler
+void EINT3_IRQHandler(void)
+{
+	// Determine whether GPIO Interrupt P0.2 has occurred
+	if ((LPC_GPIOINT->IO0IntStatF>>2)& 0x1)
+	{
+		//tempFlag = 1;
+		myReadTemp(); //readTemp here produces a more accurate result
+        LPC_GPIOINT->IO0IntClr = 1<<2;
+	}
+}
+
+void myReadTemp(void) {
+    if (state == 0) {
+    	t1 = getTicks();
+    } else {
+    	t2 = getTicks();
+    }
+    state = !state;
+
+    if (t2 > t1) {
+        period += t2-t1;
+    }
+    else {
+    	period += t1-t2;
+    }
+    count++;
+    if (count > 340) {
+        count = 0;
+    	char temp_char[40];
+        int32_t numtest = ( (1000 * period)/340 - 2731 );
+    	sprintf(temp_char, "%.2f", numtest/10.0);
+    	oled_putString(0, 0, temp_char, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+    	period = 0;
+    	if (numtest/10.0 >= 33.60) {
+    		tempFlag = 1;
+    	}
+    }
+}
+
+static void init_GPIO(void)
+{
+	PINSEL_CFG_Type PinCfg;
+	PinCfg.Funcnum = 0;
+	PinCfg.OpenDrain = 0;
+	PinCfg.Pinmode = 0;
+	PinCfg.Portnum = 1;
+	PinCfg.Pinnum = 31;
+	PINSEL_ConfigPin(&PinCfg);
+    GPIO_SetDir(1, 1<<31, 0);
+}
+
+int main (void) {
+	init_ssp();
+    oled_init();
+    init_GPIO();
+    uint8_t btn1 = 1;
+
+	SysTick_Config(SystemCoreClock/1000);
+	temp_init(getTicks);
+
+    NVIC_ClearPendingIRQ(EINT3_IRQn);
+    NVIC_SetPriority(EINT3_IRQn, 0x40); //testing it out...not sure
+    LPC_GPIOINT->IO0IntEnF |= 1<<2; // Enable GPIO Interrupt P0.2
+    NVIC_EnableIRQ(EINT3_IRQn);
+
+    oled_clearScreen(OLED_COLOR_BLACK);
+
+    while (1)
+    {
+    	btn1 = (GPIO_ReadValue(1) >> 31) & 0x01;
+    	if (tempFlag == 1) {
+    		tempFlag = 0;
+    		oled_putString(0, 10, warningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+    		//myReadTemp(); //not good to put readTemp here. Reading is off.
+    	}
+    	if (btn1 == 0) {
+    		clearWarning = 1;
+    	}
+    	if (clearWarning == 1) {
+    		clearWarning = 0;
+    		oled_clearScreen(OLED_COLOR_BLACK);
+    	}
+    }
+}
+

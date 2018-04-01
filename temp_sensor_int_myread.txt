@@ -87,10 +87,10 @@ void myReadTemp(void) {
     	period += t1-t2;
     }
     count++;
-    if (count > 50) {
+    if (count > 340) {
         count = 0;
     	char temp_char[40];
-        uint32_t numtest = ( (1000 * period)/50 - 2731 );
+        int32_t numtest = ( (1000 * period)/340 - 2731 );
     	sprintf(temp_char, "%.2f", numtest/10.0);
     	oled_putString(0, 0, temp_char, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
     	period = 0;
@@ -106,7 +106,7 @@ int main (void) {
 	temp_init(getTicks);
 
     NVIC_ClearPendingIRQ(EINT3_IRQn);
-    NVIC_SetPriority(EINT3_IRQn, 0x40); //testing it out...not sure
+    //NVIC_SetPriority(EINT3_IRQn, 0x40); //testing it out...not sure
     LPC_GPIOINT->IO0IntEnF |= 1<<2; // Enable GPIO Interrupt P0.2
     NVIC_EnableIRQ(EINT3_IRQn);
 
