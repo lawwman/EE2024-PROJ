@@ -42,11 +42,21 @@ int obstacleWarning = 0;
 uint32_t countdownTimer = 0;
 int countdownCounter = 15;
 
+/////////////////////FOR TEMP READ///////////////////////
+int tempFlag = 0; //whether there is enough readings to print on OLED
+
+static uint32_t t1 = 0;
+static uint32_t t2 = 0;
+static uint8_t state = 0;
+static uint32_t count = 0;
+static uint32_t period = 0;
+
+static int32_t tempReading = 0;
+
 //string values for modes
 char STRING_STATIONARY[] = "STATIONARY";
 char STRING_LAUNCH[] = "LAUNCH";
 char STRING_RETURN[] = "RETURN";
-char DUMMY_TEMP[] = "69 degrees";
 
 void SysTick_Handler(void) { msTicks++; }
 
@@ -61,6 +71,36 @@ void EINT3_IRQHandler(void)
         sw3 = 1;
         LPC_GPIOINT->IO2IntClr = 1<<10;
 	}
+
+	// Determine whether GPIO Interrupt P0.2 has occurred
+	if ((LPC_GPIOINT->IO0IntStatF>>2)& 0x1)
+	{
+		myReadTemp();
+        LPC_GPIOINT->IO0IntClr = 1<<2;
+	}
+}
+
+void myReadTemp(void) {
+    if (state == 0) {
+    	t1 = getTicks();
+    } else {
+    	t2 = getTicks();
+    }
+    state = !state;
+
+    if (t2 > t1) {
+        period += t2-t1;
+    }
+    else {
+    	period += t1-t2;
+    }
+    count++;
+    if (count == 340) {
+        count = 0;
+        tempFlag = 1;
+        tempReading = ( (1000 * period)/340 - 2731 );
+    	period = 0;
+    }
 }
 
 static void init_ssp(void)
@@ -136,7 +176,9 @@ static void setup(void) {
 
     NVIC_ClearPendingIRQ(EINT3_IRQn);
     LPC_GPIOINT->IO2IntEnF |= 1<<10; // Enable GPIO Interrupt P2.10
+    LPC_GPIOINT->IO0IntEnF |= 1<<2; // Enable GPIO Interrupt P0.2
     NVIC_EnableIRQ(EINT3_IRQn);
+
 }
 
 uint32_t get7segChar(int number) {
@@ -196,7 +238,6 @@ uint32_t get7segChar(int number) {
 
 void stationaryMode(void) {
 	oled_putString(0, 0, STRING_STATIONARY, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-	oled_putString(0, 10, DUMMY_TEMP, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 
 	//if sw3 has been pressed, begin countdown
 	if (countdownFlag == 1) {
@@ -236,6 +277,16 @@ static void toggleMode(void) {
 	}
 }
 
+void checkWarnings() {
+	char temp_char[40];
+
+	if (tempFlag == 1) {
+		tempFlag = 0;
+    	sprintf(temp_char, "%.2f", tempReading/10.0);
+    	oled_putString(0, 10, temp_char, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+	}
+}
+
 int main (void) {
 
 	setup();
@@ -243,6 +294,7 @@ int main (void) {
     oled_clearScreen(OLED_COLOR_BLACK);
     while(1) {
     	toggleMode();
+    	checkWarnings();
     }
 }
 
