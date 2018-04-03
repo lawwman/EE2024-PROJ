@@ -18,7 +18,7 @@
 #include "acc.h"
 #include "led7seg.h"
 
-
+#define TEMP_THRESHOLD 27.60
 /*
  * GLOBAL VARIABLES
  */
@@ -38,6 +38,7 @@ int tempWarning = 0;
 int offCourseWarning = 0;
 int obstacleWarning = 0;
 
+int clearWarningFlag = 0;
 /////////////////////FOR COUNTDOWN///////////////////////
 uint32_t countdownTimer = 0;
 int countdownCounter = 15;
@@ -57,6 +58,7 @@ static int32_t tempReading = 0;
 char STRING_STATIONARY[] = "STATIONARY";
 char STRING_LAUNCH[] = "LAUNCH";
 char STRING_RETURN[] = "RETURN";
+char tempWarningMsg[] = "TEMP WARNING";
 
 void SysTick_Handler(void) { msTicks++; }
 
@@ -284,6 +286,9 @@ void checkWarnings() {
 		tempFlag = 0;
     	sprintf(temp_char, "%.2f", tempReading/10.0);
     	oled_putString(0, 10, temp_char, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+    	if (tempReading/10.0 >= TEMP_THRESHOLD) {
+    		oled_putString(0, 20, tempWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+    	}
 	}
 }
 
