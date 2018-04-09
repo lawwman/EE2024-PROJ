@@ -1,0 +1,116 @@
+/*****************************************************************************
+ *   A demo example using several of the peripherals on the base board
+ *
+ *   Copyright(C) 2011, EE2024
+ *   All rights reserved.
+ *
+ ******************************************************************************/
+
+#include <string.h>
+#include <stdio.h>
+#include "lpc17xx_pinsel.h"
+#include "LPC17xx.h"
+#include "lpc17xx_gpio.h"
+#include "lpc17xx_timer.h"
+
+#include "rgb.h"
+
+#define SBIT_TIMER1  2
+#define SBIT_MR0I    0
+#define SBIT_MR0R    1
+#define SBIT_CNTEN   0
+
+int flag = 0;
+
+volatile uint32_t msTicks;
+
+void SysTick_Handler(void) {
+	msTicks++;
+}
+
+uint32_t getTicks(void){
+	return msTicks;
+}
+
+void TIMER1_IRQHandler(void)
+{
+    unsigned int isrMask;
+
+    isrMask = LPC_TIM1->IR;
+    LPC_TIM1->IR = isrMask;         /* Clear the Interrupt Bit */
+    flag = !flag;
+}
+
+unsigned int getPrescalarForUs(uint8_t timerPclkBit)
+{
+    unsigned int pclk,prescalarForUs;
+    pclk = (LPC_SC->PCLKSEL0 >> timerPclkBit) & 0x03;  /* get the pclk info for required timer */
+
+    switch ( pclk )                                    /* Decode the bits to determine the pclk*/
+    {
+    case 0x00:
+        pclk = SystemCoreClock/4;
+        break;
+
+    case 0x01:
+        pclk = SystemCoreClock;
+        break;
+
+    case 0x02:
+        pclk = SystemCoreClock/2;
+        break;
+
+    case 0x03:
+        pclk = SystemCoreClock/8;
+        break;
+
+    default:
+        pclk = SystemCoreClock/4;
+        break;
+    }
+
+    prescalarForUs =pclk/1000000 - 1;                    /* Prescalar for 1us (1000000Counts/sec) */
+
+    return prescalarForUs;
+}
+
+static void setup(void) {
+	unsigned int pclk;
+	pclk = (LPC_SC->PCLKSEL0 >>4) & 0x03;
+	pclk = SystemCoreClock/4;
+    rgb_init();
+
+    SystemInit();
+
+    LPC_SC->PCONP |= (1<<SBIT_TIMER1);
+
+    LPC_TIM1->MCR  = (1<<SBIT_MR0I) | (1<<SBIT_MR0R);     /* Clear TC on MR0 match and Generate Interrupt*/
+    LPC_TIM1->PR   = getPrescalarForUs(4);;     /* Prescalar for 1ms */
+    LPC_TIM1->MR0  = 333 * 1000;                                 /* Load timer value to generate 100ms delay*/
+    LPC_TIM1->TCR  = (1 <<SBIT_CNTEN);                    /* Start timer by setting the Counter Enable*/
+    NVIC_EnableIRQ(TIMER1_IRQn);
+
+	SysTick_Config(SystemCoreClock/1000);
+}
+
+int main (void) {
+	setup();
+	rgb_setLeds(0x00);
+    while(1) {
+    		if (flag == 0) {
+    			rgb_setLeds(0x00);
+    		}
+    		if (flag == 1) {
+    			rgb_setLeds(RGB_RED);
+    		}
+    }
+}
+
+void check_failed(uint8_t *file, uint32_t line)
+{
+	/* User can add his own implementation to report the file name and line number,
+	 ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+	/* Infinite loop */
+	while(1);
+}
+

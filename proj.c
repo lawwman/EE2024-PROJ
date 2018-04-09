@@ -18,7 +18,7 @@
 #include "acc.h"
 #include "led7seg.h"
 
-#define TEMP_THRESHOLD 27.60
+#define TEMP_THRESHOLD 319
 /*
  * GLOBAL VARIABLES
  */
@@ -51,7 +51,6 @@ static uint32_t t2 = 0;
 static uint8_t state = 0;
 static uint32_t count = 0;
 static uint32_t period = 0;
-
 static int32_t tempReading = 0;
 
 //string values for modes
@@ -103,6 +102,62 @@ void myReadTemp(void) {
         tempReading = ( (1000 * period)/340 - 2731 );
     	period = 0;
     }
+}
+
+
+uint32_t get7segChar(int number) {
+	uint32_t toReturn = 0;
+	switch(number) {
+	case 15:
+		toReturn = 0x71;
+		break;
+	case 14:
+		toReturn = 0x70;
+		break;
+	case 13:
+		toReturn = 0xA8;
+		break;
+	case 12:
+		toReturn = 0x74;
+		break;
+	case 11:
+		toReturn = 0x38;
+		break;
+	case 10:
+		toReturn = 0x21;
+		break;
+	case 9:
+		toReturn = 0x22;
+		break;
+	case 8:
+		toReturn = 0x20;
+		break;
+	case 7:
+		toReturn = 0xA7;
+		break;
+	case 6:
+		toReturn = 0x30;
+		break;
+	case 5:
+		toReturn = 0x32;
+		break;
+	case 4:
+		toReturn = 0x2B;
+		break;
+	case 3:
+		toReturn = 0xA2;
+		break;
+	case 2:
+		toReturn = 0xE0;
+		break;
+	case 1:
+		toReturn = 0xAF;
+		break;
+	case 0:
+		toReturn = 0x24;
+		break;
+	}
+	return toReturn;
 }
 
 static void init_ssp(void)
@@ -161,6 +216,19 @@ static void init_i2c(void)
 	I2C_Cmd(LPC_I2C2, ENABLE);
 }
 
+
+static void init_GPIO(void)
+{
+	PINSEL_CFG_Type PinCfg;
+	PinCfg.Funcnum = 0;
+	PinCfg.OpenDrain = 0;
+	PinCfg.Pinmode = 0;
+	PinCfg.Portnum = 1;
+	PinCfg.Pinnum = 31;
+	PINSEL_ConfigPin(&PinCfg); //for SW4
+    GPIO_SetDir(1, 1<<31, 0);  //for SW4 to set as input
+}
+
 /*
  * Initializes interrupts
  * Enable Interrupts
@@ -168,6 +236,7 @@ static void init_i2c(void)
 static void setup(void) {
 	init_ssp();
 	init_i2c();
+	init_GPIO();
 
 	SysTick_Config(SystemCoreClock/1000);
 
@@ -177,71 +246,16 @@ static void setup(void) {
     temp_init(getTicks);
 
     NVIC_ClearPendingIRQ(EINT3_IRQn);
-    LPC_GPIOINT->IO2IntEnF |= 1<<10; // Enable GPIO Interrupt P2.10
-    LPC_GPIOINT->IO0IntEnF |= 1<<2; // Enable GPIO Interrupt P0.2
+    LPC_GPIOINT->IO2IntEnF |= 1<<10; // Enable GPIO Interrupt P2.10 - sw3 int
+    LPC_GPIOINT->IO0IntEnF |= 1<<2; // Enable GPIO Interrupt P0.2 - temp sensor int
     NVIC_EnableIRQ(EINT3_IRQn);
 
-}
-
-uint32_t get7segChar(int number) {
-	uint32_t toReturn = 0;
-	switch(number) {
-	case 15:
-		toReturn = 0x71;
-		break;
-	case 14:
-		toReturn = 0x70;
-		break;
-	case 13:
-		toReturn = 0xA8;
-		break;
-	case 12:
-		toReturn = 0x74;
-		break;
-	case 11:
-		toReturn = 0x38;
-		break;
-	case 10:
-		toReturn = 0x21;
-		break;
-	case 9:
-		toReturn = 0x22;
-		break;
-	case 8:
-		toReturn = 0x20;
-		break;
-	case 7:
-		toReturn = 0xA7;
-		break;
-	case 6:
-		toReturn = 0x30;
-		break;
-	case 5:
-		toReturn = 0x32;
-		break;
-	case 4:
-		toReturn = 0x2B;
-		break;
-	case 3:
-		toReturn = 0xA2;
-		break;
-	case 2:
-		toReturn = 0xE0;
-		break;
-	case 1:
-		toReturn = 0xAF;
-		break;
-	case 0:
-		toReturn = 0x24;
-		break;
-	}
-	return toReturn;
 }
 
 void stationaryMode(void) {
 	oled_putString(0, 0, STRING_STATIONARY, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 
-	//if sw3 has been pressed, begin countdown
+	//if countdownFlag raised (by sw3 int), begin countdown
 	if (countdownFlag == 1) {
 		uint32_t currentTime = getTicks();
 		//1 second has passed
@@ -249,14 +263,14 @@ void stationaryMode(void) {
 			countdownTimer = getTicks();
 			countdownCounter -= 1;
 			led7seg_setChar(get7segChar(countdownCounter), 1);
-			//countdown successfully reach 0
+			//countdownCounter successfully reach 0
 			if (countdownCounter == 0) {
 				countdownFlag = 0;
 				currentState = 1;  //toggle to launch mode
 				oled_clearScreen(OLED_COLOR_BLACK);
 			}
 		}
-	} else 	led7seg_setChar(get7segChar(countdownCounter), 1);
+	} else 	led7seg_setChar(get7segChar(countdownCounter), 1); //if no countdown, display F in 7seg
 
 }
 
@@ -269,7 +283,8 @@ static void toggleMode(void) {
 	if (currentState==0) {
 		if (sw3 == 1) {
 			countdownFlag = 1;
-			countdownTimer = getTicks(); //begin the countdown timer
+			 //begin the countdownTimer. Only called once, sw3 is set to zero in next line.
+			countdownTimer = getTicks();
 			sw3 = 0; //reset the flag
 		}
 		stationaryMode();
@@ -279,16 +294,26 @@ static void toggleMode(void) {
 	}
 }
 
-void checkWarnings() {
+void checkWarnings(void) {
 	char temp_char[40];
 
+	//show tempReading on led if tempFlag is 1
 	if (tempFlag == 1) {
 		tempFlag = 0;
     	sprintf(temp_char, "%.2f", tempReading/10.0);
     	oled_putString(0, 10, temp_char, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-    	if (tempReading/10.0 >= TEMP_THRESHOLD) {
+    	if (tempReading >= TEMP_THRESHOLD) {
+    		countdownFlag = 0; //abort countdownFlag
+    		countdownCounter = 15; //reset counter to display 'F' on 7 seg
     		oled_putString(0, 20, tempWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
     	}
+	}
+}
+
+//SW4 pressed once (for now in any mode) will clear the oled screen.
+void clearWarnings(void) {
+	if (((GPIO_ReadValue(1) >> 31) & 0x01) == 0) {
+		oled_clearScreen(OLED_COLOR_BLACK);
 	}
 }
 
@@ -300,6 +325,7 @@ int main (void) {
     while(1) {
     	toggleMode();
     	checkWarnings();
+    	clearWarnings();
     }
 }
 
