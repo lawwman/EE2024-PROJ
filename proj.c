@@ -17,12 +17,22 @@
 #include "oled.h"
 #include "acc.h"
 #include "led7seg.h"
+#include "rgb.h"
 
-#define TEMP_THRESHOLD 319
+#define RGB_RED   0x01
+#define RGB_BLUE  0x02
+
+#define TEMP_THRESHOLD 336
 /*
  * GLOBAL VARIABLES
  */
 volatile uint32_t msTicks;
+
+//for timer 1 interrupt
+#define SBIT_TIMER1  2
+#define SBIT_MR0I    0
+#define SBIT_MR0R    1
+#define SBIT_CNTEN   0
 
 /*
  * 0 = stationary
@@ -53,6 +63,9 @@ static uint32_t count = 0;
 static uint32_t period = 0;
 static int32_t tempReading = 0;
 
+/////////////////////RGB///////////////////////
+int toggleRGB = 0;
+
 //string values for modes
 char STRING_STATIONARY[] = "STATIONARY";
 char STRING_LAUNCH[] = "LAUNCH";
@@ -79,6 +92,16 @@ void EINT3_IRQHandler(void)
 		myReadTemp();
         LPC_GPIOINT->IO0IntClr = 1<<2;
 	}
+}
+
+//TIMER 1 Interrupt Handler
+void TIMER1_IRQHandler(void)
+{
+    unsigned int isrMask;
+
+    isrMask = LPC_TIM1->IR;
+    LPC_TIM1->IR = isrMask;         /* Clear the Interrupt Bit */
+    toggleRGB = !toggleRGB;
 }
 
 void myReadTemp(void) {
@@ -158,6 +181,54 @@ uint32_t get7segChar(int number) {
 		break;
 	}
 	return toReturn;
+}
+
+void my_rgb_setLeds (uint8_t ledMask)
+{
+    if ((ledMask & RGB_RED) != 0) {
+        GPIO_SetValue( 2, 1);
+    } else {
+        GPIO_ClearValue( 2, 1 );
+    }
+
+    if ((ledMask & RGB_BLUE) != 0) {
+        GPIO_SetValue( 0, (1<<26) );
+    } else {
+        GPIO_ClearValue( 0, (1<<26) );
+    }
+}
+
+unsigned int getPrescalarForUs(uint8_t timerPclkBit)
+{
+    unsigned int pclk,prescalarForUs;
+    pclk = (LPC_SC->PCLKSEL0 >> timerPclkBit) & 0x03;  /* get the pclk info for required timer */
+
+    switch ( pclk )                                    /* Decode the bits to determine the pclk*/
+    {
+    case 0x00:
+        pclk = SystemCoreClock/4;
+        break;
+
+    case 0x01:
+        pclk = SystemCoreClock;
+        break;
+
+    case 0x02:
+        pclk = SystemCoreClock/2;
+        break;
+
+    case 0x03:
+        pclk = SystemCoreClock/8;
+        break;
+
+    default:
+        pclk = SystemCoreClock/4;
+        break;
+    }
+
+    prescalarForUs =pclk/1000000 - 1;                    /* Prescalar for 1us (1000000Counts/sec) */
+
+    return prescalarForUs;
 }
 
 static void init_ssp(void)
@@ -242,8 +313,19 @@ static void setup(void) {
 
     oled_init();
     acc_init();
+    rgb_init();
     led7seg_init();
     temp_init(getTicks);
+
+    SystemInit();
+
+    LPC_SC->PCONP |= (1<<SBIT_TIMER1);
+
+    LPC_TIM1->MCR  = (1<<SBIT_MR0I) | (1<<SBIT_MR0R);/* Clear TC on MR0 match and Generate Interrupt*/
+    LPC_TIM1->PR   = getPrescalarForUs(4);;          /* Prescalar for 1ms */
+    LPC_TIM1->MR0  = 333 * 1000;                     /* Load timer value to generate 100ms delay*/
+    LPC_TIM1->TCR  = (1 <<SBIT_CNTEN);               /* Start timer by setting the Counter Enable*/
+    NVIC_EnableIRQ(TIMER1_IRQn);
 
     NVIC_ClearPendingIRQ(EINT3_IRQn);
     LPC_GPIOINT->IO2IntEnF |= 1<<10; // Enable GPIO Interrupt P2.10 - sw3 int
@@ -306,7 +388,16 @@ void checkWarnings(void) {
     		countdownFlag = 0; //abort countdownFlag
     		countdownCounter = 15; //reset counter to display 'F' on 7 seg
     		oled_putString(0, 20, tempWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+    		tempWarning = 1;
     	}
+	}
+	if (tempWarning == 1) {
+		if (toggleRGB == 0) {
+			my_rgb_setLeds(0x00);
+		}
+		if (toggleRGB == 1) {
+			my_rgb_setLeds(RGB_RED);
+		}
 	}
 }
 
@@ -314,6 +405,8 @@ void checkWarnings(void) {
 void clearWarnings(void) {
 	if (((GPIO_ReadValue(1) >> 31) & 0x01) == 0) {
 		oled_clearScreen(OLED_COLOR_BLACK);
+		tempWarning = 0;
+		my_rgb_setLeds(0x00);
 	}
 }
 
@@ -322,6 +415,7 @@ int main (void) {
 	setup();
 
     oled_clearScreen(OLED_COLOR_BLACK);
+    my_rgb_setLeds(0x00);
     while(1) {
     	toggleMode();
     	checkWarnings();
