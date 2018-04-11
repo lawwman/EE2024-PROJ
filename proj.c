@@ -22,7 +22,7 @@
 #define RGB_RED   0x01
 #define RGB_BLUE  0x02
 
-#define TEMP_THRESHOLD 336
+#define TEMP_THRESHOLD 276
 /*
  * GLOBAL VARIABLES
  */
@@ -59,18 +59,27 @@ int tempFlag = 0; //whether there is enough readings to print on OLED
 static uint32_t t1 = 0;
 static uint32_t t2 = 0;
 static uint8_t state = 0;
-static uint32_t count = 0;
+static uint32_t count = 0; //count number of readings taken
 static uint32_t period = 0;
 static int32_t tempReading = 0;
 
 /////////////////////RGB///////////////////////
 int toggleRGB = 0;
 
+/////////////////////ACC///////////////////////
+int32_t xoff = 0;
+int32_t yoff = 0;
+int32_t zoff = 0;
+int8_t x = 0;
+int8_t y = 0;
+int8_t z = 0;
+
 //string values for modes
 char STRING_STATIONARY[] = "STATIONARY";
 char STRING_LAUNCH[] = "LAUNCH";
 char STRING_RETURN[] = "RETURN";
-char tempWarningMsg[] = "TEMP WARNING";
+char tempWarningMsg[] = "Temp. Too high";
+char accWarningMsg[] = "Veer off course";
 
 void SysTick_Handler(void) { msTicks++; }
 
@@ -181,6 +190,37 @@ uint32_t get7segChar(int number) {
 		break;
 	}
 	return toReturn;
+}
+
+void my_read_acc(void ) {
+	acc_read(&x, &y, &z);
+    x = x+xoff;
+    y = y+yoff;
+
+    char Xvalue[5];
+    char Yvalue[5];
+
+    sprintf(Xvalue, "%.2f", x/9.8);
+    sprintf(Yvalue, "%.2f", y/9.8);
+
+    if (x/1.0 > 3.92 || y/1.0 > 3.92) {
+    	offCourseWarning = 1;
+    }
+
+    char acc_valX[40];
+    char acc_valY[40];
+
+    strcpy(acc_valX, "X:");
+    strcat(acc_valX, Xvalue);
+    strcat(acc_valX, " ");
+    strcat(acc_valX, "  ");
+    strcpy(acc_valY, "Y:");
+    strcat(acc_valY, Yvalue);
+    strcat(acc_valY, " ");
+    strcat(acc_valY, "  ");
+
+	oled_putString(0, 20, acc_valX, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+	oled_putString(0, 30, acc_valY, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 }
 
 void my_rgb_setLeds (uint8_t ledMask)
@@ -359,6 +399,7 @@ void stationaryMode(void) {
 void launchMode(void) {
 	oled_putString(0, 0, STRING_LAUNCH, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 	led7seg_setChar(get7segChar(countdownCounter), 1);
+	my_read_acc();
 }
 
 static void toggleMode(void) {
@@ -387,16 +428,33 @@ void checkWarnings(void) {
     	if (tempReading >= TEMP_THRESHOLD) {
     		countdownFlag = 0; //abort countdownFlag
     		countdownCounter = 15; //reset counter to display 'F' on 7 seg
-    		oled_putString(0, 20, tempWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+    		oled_putString(0, 40, tempWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
     		tempWarning = 1;
     	}
 	}
-	if (tempWarning == 1) {
+	if (offCourseWarning == 1) {
+		oled_putString(0, 50, accWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+	}
+	if (tempWarning == 1 && offCourseWarning == 0) {
 		if (toggleRGB == 0) {
 			my_rgb_setLeds(0x00);
 		}
 		if (toggleRGB == 1) {
 			my_rgb_setLeds(RGB_RED);
+		}
+	} else if (tempWarning == 1 && offCourseWarning == 1) {
+		if (toggleRGB == 0) {
+			my_rgb_setLeds(RGB_BLUE);
+		}
+		if (toggleRGB == 1) {
+			my_rgb_setLeds(RGB_RED);
+		}
+	} else if (tempWarning == 0 && offCourseWarning == 1) {
+		if (toggleRGB == 0) {
+			my_rgb_setLeds(RGB_BLUE);
+		}
+		if (toggleRGB == 1) {
+			my_rgb_setLeds(0);
 		}
 	}
 }
@@ -406,6 +464,7 @@ void clearWarnings(void) {
 	if (((GPIO_ReadValue(1) >> 31) & 0x01) == 0) {
 		oled_clearScreen(OLED_COLOR_BLACK);
 		tempWarning = 0;
+		offCourseWarning = 0;
 		my_rgb_setLeds(0x00);
 	}
 }
@@ -416,6 +475,13 @@ int main (void) {
 
     oled_clearScreen(OLED_COLOR_BLACK);
     my_rgb_setLeds(0x00);
+    /*
+     * Assume base board in zero-g position when reading first value.
+     */
+	acc_read(&x, &y, &z);
+	xoff = 0-x;
+	yoff = 0-y;
+	zoff = 0-z;
     while(1) {
     	toggleMode();
     	checkWarnings();
