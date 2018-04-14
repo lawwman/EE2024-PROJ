@@ -13,6 +13,7 @@
 #include "lpc17xx_i2c.h"
 #include "lpc17xx_timer.h"
 #include "lpc17xx_uart.h"
+#include "lpc17xx_gpio.h"
 
 #include "temp.h"
 #include "oled.h"
@@ -25,16 +26,14 @@
 
 #define RGB_RED   0x01
 #define RGB_BLUE  0x02
-
 #define OBSTACLE_NEAR_THRESHOLD 3000
 #define TEMP_THRESHOLD 360
-/*
- * GLOBAL VARIABLES
- */
+
 volatile uint32_t msTicks;
 
 static uint8_t uart_stationary[] = "Entering STATIONARY Mode \r\n";
 static uint8_t uart_launch[] = "Entering LAUNCH Mode \r\n";
+static uint8_t uart_return[] = "Entering RETURN Mode \r\n";
 
 //for timer 1 interrupt
 #define SBIT_TIMER1  2
@@ -43,6 +42,7 @@ static uint8_t uart_launch[] = "Entering LAUNCH Mode \r\n";
 #define SBIT_CNTEN   0
 
 /*
+ * States
  * 0 = stationary
  * 1 = launch
  * 2 = return
@@ -70,7 +70,6 @@ uint8_t intMsg[4] = {'R', 'P', 'T', '\0'};
 
 uint32_t isReceived = 0;  // Init to be not received
 
-
 /////////////////////FOR TEMP READ///////////////////////
 int tempFlag = 0; //whether there is enough readings to print on OLED
 
@@ -97,61 +96,16 @@ uint32_t light_value = 0;
 int clearLightWarningFlag = 0;
 
 //string values for modes
-char STRING_STATIONARY[] = "STATIONARY";
-char STRING_LAUNCH[] = "LAUNCH";
-char STRING_RETURN[] = "RETURN";
-char tempWarningMsg[] = "Temp. Too high";
-char accWarningMsg[] = "Veer off course";
-char lightWarningMsg[] = "Obstacle near";
+uint8_t STRING_STATIONARY[] = "STATIONARY";
+uint8_t STRING_LAUNCH[] = "LAUNCH";
+uint8_t STRING_RETURN[] = "RETURN";
+uint8_t tempWarningMsg[] = "Temp. Too high";
+uint8_t accWarningMsg[] = "Veer off course";
+uint8_t lightWarningMsg[] = "Obstacle near";
 
 void SysTick_Handler(void) { msTicks++; }
 
 uint32_t getTicks(void){ return msTicks; }
-
-// EINT3 Interrupt Handler
-void EINT3_IRQHandler(void)
-{
-	// Determine whether GPIO Interrupt P2.10 has occurred
-	// SW3 interrupt
-	if ((LPC_GPIOINT->IO2IntStatF>>10)& 0x1)
-	{
-        sw3 = 1;
-        LPC_GPIOINT->IO2IntClr = 1<<10;
-	}
-
-	// Determine whether GPIO Interrupt P0.2 has occurred
-	// Temp sensor interrupt
-	if ((LPC_GPIOINT->IO0IntStatF>>2)& 0x1)
-	{
-		myReadTemp();
-        LPC_GPIOINT->IO0IntClr = 1<<2;
-	}
-
-	// Determine whether GPIO Interrupt P2.5 has occurred
-	// Light sensor interrupt
-	if ((LPC_GPIOINT->IO2IntStatF>>5) & 0x1)
-	{
-		obstacleWarning = 1;
-        light_clearIrqStatus();
-        LPC_GPIOINT ->IO2IntClr = 1<<5;
-	}
-
-}
-
-void UART3_IRQHandler(void)
-{
-	UART3_StdIntHandler();
-}
-
-//TIMER 1 Interrupt Handler
-void TIMER1_IRQHandler(void)
-{
-    unsigned int isrMask;
-
-    isrMask = LPC_TIM1->IR;
-    LPC_TIM1->IR = isrMask;         /* Clear the Interrupt Bit */
-    toggleRGB = !toggleRGB;
-}
 
 void myReadTemp(void) {
 	if (currentState != 2) {
@@ -176,6 +130,46 @@ void myReadTemp(void) {
 			period = 0;
 		}
 	}
+}
+
+// EINT3 Interrupt Handler
+void EINT3_IRQHandler(void)
+{
+	// Determine whether GPIO Interrupt P2.10 has occurred - SW3 interrupt
+	if ((LPC_GPIOINT->IO2IntStatF>>10)& 0x1)
+	{
+        sw3 = 1;
+        LPC_GPIOINT->IO2IntClr = 1<<10;
+	}
+	// Determine whether GPIO Interrupt P0.2 has occurred - Temp sensor interrupt
+	if ((LPC_GPIOINT->IO0IntStatF>>2)& 0x1)
+	{
+		myReadTemp();
+        LPC_GPIOINT->IO0IntClr = 1<<2;
+	}
+
+	// Determine whether GPIO Interrupt P2.5 has occurred - Light sensor interrupt
+	if ((LPC_GPIOINT->IO2IntStatF>>5) & 0x1)
+	{
+		obstacleWarning = 1;
+        light_clearIrqStatus();
+        LPC_GPIOINT ->IO2IntClr = 1<<5;
+	}
+}
+
+void UART3_IRQHandler(void)
+{
+	UART3_StdIntHandler();
+}
+
+//TIMER 1 Interrupt Handler
+void TIMER1_IRQHandler(void)
+{
+    unsigned int isrMask;
+
+    isrMask = LPC_TIM1->IR;
+    LPC_TIM1->IR = isrMask;         /* Clear the Interrupt Bit */
+    toggleRGB = !toggleRGB;
 }
 
 static void distanceLED(void){
@@ -302,8 +296,8 @@ void my_read_acc(void ) {
     	offCourseWarning = 1;
     }
 
-    char acc_valX[40];
-    char acc_valY[40];
+    uint8_t acc_valX[40];
+    uint8_t acc_valY[40];
 
     strcpy(acc_valX, "X:");
     strcat(acc_valX, Xvalue);
@@ -618,7 +612,7 @@ static void toggleMode(void) {
 void checkWarnings(void) {
 	//checking for warnings in STATIONARY or RETURN mode
 	if (currentState == 0 || currentState == 1) {
-		char temp_char[40];
+		uint8_t temp_char[40];
 		//show tempReading on led if tempFlag is 1
 		if (tempFlag == 1) {
 			tempFlag = 0;
@@ -659,7 +653,7 @@ void checkWarnings(void) {
 	}
 	//only in return mode
 	if (currentState == 2) {
-		char light_reading[40];
+		uint8_t light_reading[40];
 		sprintf(light_reading,"%d",light_value);
 		strcat(light_reading, "  ");
 		if (obstacleWarning == 1) {
@@ -687,14 +681,10 @@ void clearWarnings(void) {
 }
 
 int main (void) {
-
 	setup();
-
     oled_clearScreen(OLED_COLOR_BLACK);
     my_rgb_setLeds(0x00);
-    /*
-     * Assume base board in zero-g position when reading first value.
-     */
+    ////////////////Assume base board in zero-g position when reading first value./////////////////////
 	acc_read(&x, &y, &z);
 	xoff = 0-x;
 	yoff = 0-y;
