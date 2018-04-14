@@ -112,7 +112,7 @@ int main (void){
     	if (isReceived == 1) {
     		isReceived = 0;
     		printf("%s\n", teraterm);
-    		if(teraterm[0] == greeting[0] && teraterm[1] == greeting[1] && teraterm[2] == greeting[2]){
+    		if(strcmp(teraterm, greeting) == 0){
     			printf("set flag\n");
     		}
     		printf("%d\n", rev_cnt);
