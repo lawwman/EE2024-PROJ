@@ -18,10 +18,9 @@
 uint8_t rev_buf[4];                               // Reception buffer
 uint32_t rev_cnt = 0;                               // Reception counter
 uint8_t teraterm[4];
-uint8_t greeting[4] = {'R', 'P', 'T', '\0'};
+uint8_t intMsg[4] = {'R', 'P', 'T', '\0'};
 
 uint32_t isReceived = 0;                            // Init to be not received
-int slashRFlag = 0;
 
 void UART_IntReceive(void)
 {
@@ -36,11 +35,6 @@ void UART_IntReceive(void)
         if (rev_buf[rev_cnt] == '\n') {
         	printf("new line detected\n");
         	rev_cnt = -1;
-        	rev_buf[0] = 'f';
-        	rev_buf[1] = 'f';
-        	rev_buf[2] = 'f';
-        	rev_buf[3] = '\0';
-        	printf("%s\n", rev_buf);
         }
         rev_cnt++;
         if(rev_cnt == 4) rev_cnt = 0;
@@ -49,14 +43,6 @@ void UART_IntReceive(void)
 
 void UART3_IRQHandler(void)
 {
-//	if ((LPC_UART3->IIR & 0xE) == 0b0100) {
-//		printf("uart RDA INT\n");
-//		UART_ReceiveData(LPC_UART3);
-//	}
-//	if ((LPC_UART3->IIR & 0xE) == 0b1100) {
-//		printf("uart CTI INT\n");
-//		UART_ReceiveData(LPC_UART3);
-//	}
 	UART3_StdIntHandler();
 }
 
@@ -112,7 +98,7 @@ int main (void){
     	if (isReceived == 1) {
     		isReceived = 0;
     		printf("%s\n", teraterm);
-    		if(strcmp(teraterm, greeting) == 0){
+    		if(strcmp(teraterm, intMsg) == 0){
     			printf("set flag\n");
     		}
     		printf("%d\n", rev_cnt);

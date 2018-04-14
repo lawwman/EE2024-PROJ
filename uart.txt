@@ -12,8 +12,13 @@
 #include "lpc17xx_gpio.h"
 #include "lpc17xx_uart.h"
 
-#include "uart2.h"
+static char msg[] = "Welcome to EE2024 \r\n";
 
+
+void UART3_IRQHandler(void)
+{
+	UART3_StdIntHandler();
+}
 
 void pinsel_uart3(void){
     PINSEL_CFG_Type PinCfg;
@@ -37,9 +42,21 @@ void init_uart(void){
     UART_Init(LPC_UART3, &uartCfg);
     //enable transmit for uart3
     UART_TxCmd(LPC_UART3, ENABLE);
+
+    // UART FIFO config
+    UART_FIFO_CFG_Type UARTFIFOConfigStruct;
+
+    UART_FIFOConfigStructInit(&UARTFIFOConfigStruct);
+    // Init FIFO for UART3
+    UART_FIFOConfig(LPC_UART3, &UARTFIFOConfigStruct);
+
+    /* Enable UART Rx interrupt */
+    UART_IntConfig(LPC_UART3, UART_INTCFG_RBR, ENABLE);
+
+    /* Enable Interrupt for UART3 */
+    NVIC_EnableIRQ(UART3_IRQn);
 }
 
-static char* msg = NULL;
 int main (void){
     uint8_t data = 0;
     uint32_t len = 0;
@@ -47,25 +64,7 @@ int main (void){
 
     init_uart();
     //test sending message
-    msg = "Welcome to EE2024 \r\n";
     UART_Send(LPC_UART3, (uint8_t *)msg , strlen(msg), BLOCKING);
-    //test receiving a letter and sending back to port
-    UART_Receive(LPC_UART3, &data, 1, BLOCKING);
-    UART_Send(LPC_UART3, &data, 1, BLOCKING);
-    //test receiving message without knowing message length
-    len = 0;
-    do
-    {   UART_Receive(LPC_UART3, &data, 1, BLOCKING);
-
-        if (data != '\r')
-        {
-            len++;
-            line[len-1] = data;
-        }
-    } while ((len<63) && (data != '\r'));
-    line[len]=0;
-    UART_SendString(LPC_UART3, &line);
-    printf("--%s--\n", line);
     while (1);
     return 0;
 }

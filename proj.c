@@ -12,6 +12,7 @@
 #include "lpc17xx_ssp.h"
 #include "lpc17xx_i2c.h"
 #include "lpc17xx_timer.h"
+#include "lpc17xx_uart.h"
 
 #include "temp.h"
 #include "oled.h"
@@ -31,6 +32,9 @@
  * GLOBAL VARIABLES
  */
 volatile uint32_t msTicks;
+
+static uint8_t uart_stationary[] = "Entering STATIONARY Mode \r\n";
+static uint8_t uart_launch[] = "Entering LAUNCH Mode \r\n";
 
 //for timer 1 interrupt
 #define SBIT_TIMER1  2
@@ -57,6 +61,15 @@ int clearWarningFlag = 0;
 /////////////////////FOR COUNTDOWN///////////////////////
 uint32_t countdownTimer = 0;
 int countdownCounter = 15;
+
+/////////////////////FOR UART///////////////////////
+uint8_t rev_buf[4];    // Reception buffer
+uint32_t rev_cnt = 0;  // Reception counter
+uint8_t teraterm[4];   // To check against intMsg
+uint8_t intMsg[4] = {'R', 'P', 'T', '\0'};
+
+uint32_t isReceived = 0;  // Init to be not received
+
 
 /////////////////////FOR TEMP READ///////////////////////
 int tempFlag = 0; //whether there is enough readings to print on OLED
@@ -123,6 +136,11 @@ void EINT3_IRQHandler(void)
         LPC_GPIOINT ->IO2IntClr = 1<<5;
 	}
 
+}
+
+void UART3_IRQHandler(void)
+{
+	UART3_StdIntHandler();
 }
 
 //TIMER 1 Interrupt Handler
@@ -300,6 +318,24 @@ void my_read_acc(void ) {
 	oled_putString(0, 30, acc_valY, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 }
 
+void UART_IntReceive(void)
+{
+    /* Read the received data */
+    if(UART_Receive(LPC_UART3, &rev_buf[rev_cnt], 1, NONE_BLOCKING) == 1) {
+        if(rev_buf[rev_cnt] == '\r'){
+        	rev_buf[rev_cnt] = 'X';
+        	rev_buf[3] = '\0';
+            isReceived = 1;
+            strcpy(teraterm, rev_buf);
+        }
+        if (rev_buf[rev_cnt] == '\n') {
+        	rev_cnt = -1;
+        }
+        rev_cnt++;
+        if(rev_cnt == 4) rev_cnt = 0;
+    }
+}
+
 void my_rgb_setLeds (uint8_t ledMask)
 {
     if ((ledMask & RGB_RED) != 0) {
@@ -423,10 +459,48 @@ static void init_GPIO(void)
 
 }
 
-/*
- * Initializes interrupts
- * Enable Interrupts
- */
+void pinsel_uart3(void){
+    PINSEL_CFG_Type PinCfg;
+    PinCfg.Funcnum = 2;
+    PinCfg.Pinnum = 0;
+    PinCfg.Portnum = 0;
+    PINSEL_ConfigPin(&PinCfg);
+    PinCfg.Pinnum = 1;
+    PINSEL_ConfigPin(&PinCfg);
+}
+
+
+void init_uart(void){
+    UART_CFG_Type uartCfg;
+    uartCfg.Baud_rate = 115200;
+    uartCfg.Databits = UART_DATABIT_8;
+    uartCfg.Parity = UART_PARITY_NONE;
+    uartCfg.Stopbits = UART_STOPBIT_1;
+    //pin select for uart3;
+    pinsel_uart3();
+    //supply power & setup working parameters for uart3
+    UART_Init(LPC_UART3, &uartCfg);
+    //enable transmit for uart3
+    UART_TxCmd(LPC_UART3, ENABLE);
+}
+
+void setUartInt(void) {
+    // UART FIFO config
+    UART_FIFO_CFG_Type UARTFIFOConfigStruct;
+
+    UART_FIFOConfigStructInit(&UARTFIFOConfigStruct);
+    // Init FIFO for UART3
+    UART_FIFOConfig(LPC_UART3, &UARTFIFOConfigStruct);
+    //------------------------------------------------
+    UART_SetupCbs(LPC_UART3, 0, (void *)UART_IntReceive);
+    /* Enable UART Rx interrupt */
+    UART_IntConfig(LPC_UART3, UART_INTCFG_RBR, ENABLE);
+
+    NVIC_ClearPendingIRQ(UART3_IRQn);
+    /* Enable Interrupt for UART3 */
+    NVIC_EnableIRQ(UART3_IRQn);
+}
+
 static void setup(void) {
 	init_ssp();
 	init_i2c();
@@ -453,7 +527,8 @@ static void setup(void) {
     LPC_TIM1->TCR  = (1 <<SBIT_CNTEN);               /* Start timer by setting the Counter Enable*/
     NVIC_EnableIRQ(TIMER1_IRQn);
 
-
+    init_uart();
+    setUartInt();
 
     LPC_GPIOINT->IO2IntEnF |= 1<<10; //Enable GPIO Interrupt P2.10 - sw3 int
     LPC_GPIOINT->IO0IntEnF |= 1<<2;  //Enable GPIO Interrupt P0.2 - temp sensor int
@@ -481,6 +556,7 @@ void stationaryMode(void) {
 			if (countdownCounter == 0) {
 				countdownFlag = 0;
 				currentState = 1;  //toggle to launch mode
+				UART_Send(LPC_UART3, (uint8_t *)uart_launch , strlen(uart_launch), BLOCKING);
 				oled_clearScreen(OLED_COLOR_BLACK);
 			}
 		}
@@ -508,6 +584,10 @@ static void toggleMode(void) {
 			 //begin the countdownTimer. Only called once, sw3 is set to zero in next line.
 			countdownTimer = getTicks();
 			sw3 = 0; //reset the flag
+		}
+		uint32_t test = getTicks();
+		if (test > 500 && test < 510) {
+		    UART_Send(LPC_UART3, (uint8_t *)uart_stationary , strlen(uart_stationary), BLOCKING);
 		}
 		stationaryMode();
 	}
@@ -619,10 +699,19 @@ int main (void) {
 	xoff = 0-x;
 	yoff = 0-y;
 	zoff = 0-z;
+
     while(1) {
     	toggleMode();
     	checkWarnings();
     	clearWarnings();
+    	if (isReceived == 1) {
+    		isReceived = 0;
+    		printf("%s\n", teraterm);
+    		if(strcmp(teraterm, intMsg) == 0){
+    			printf("set flag\n");
+    		}
+    		printf("%d\n", rev_cnt);
+    	}
     }
 }
 
