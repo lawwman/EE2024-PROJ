@@ -18,11 +18,15 @@
 #include "acc.h"
 #include "led7seg.h"
 #include "rgb.h"
+#include "light.h"
+#include "pca9532.h"
+
 
 #define RGB_RED   0x01
 #define RGB_BLUE  0x02
 
-#define TEMP_THRESHOLD 276
+#define OBSTACLE_NEAR_THRESHOLD 3000
+#define TEMP_THRESHOLD 360
 /*
  * GLOBAL VARIABLES
  */
@@ -40,6 +44,7 @@ volatile uint32_t msTicks;
  * 2 = return
  */
 int currentState = 0;
+static uint32_t lastPressedTime = 0; //record last instance of sw3 being pressed (Launch mode)
 
 /////////////////////FLAGS//////////////////////////////
 int sw3 = 0;
@@ -74,12 +79,17 @@ int8_t x = 0;
 int8_t y = 0;
 int8_t z = 0;
 
+/////////////////////LIGHT SENSOR///////////////////////
+uint32_t light_value = 0;
+int clearLightWarningFlag = 0;
+
 //string values for modes
 char STRING_STATIONARY[] = "STATIONARY";
 char STRING_LAUNCH[] = "LAUNCH";
 char STRING_RETURN[] = "RETURN";
 char tempWarningMsg[] = "Temp. Too high";
 char accWarningMsg[] = "Veer off course";
+char lightWarningMsg[] = "Obstacle near";
 
 void SysTick_Handler(void) { msTicks++; }
 
@@ -89,6 +99,7 @@ uint32_t getTicks(void){ return msTicks; }
 void EINT3_IRQHandler(void)
 {
 	// Determine whether GPIO Interrupt P2.10 has occurred
+	// SW3 interrupt
 	if ((LPC_GPIOINT->IO2IntStatF>>10)& 0x1)
 	{
         sw3 = 1;
@@ -96,11 +107,22 @@ void EINT3_IRQHandler(void)
 	}
 
 	// Determine whether GPIO Interrupt P0.2 has occurred
+	// Temp sensor interrupt
 	if ((LPC_GPIOINT->IO0IntStatF>>2)& 0x1)
 	{
 		myReadTemp();
         LPC_GPIOINT->IO0IntClr = 1<<2;
 	}
+
+	// Determine whether GPIO Interrupt P2.5 has occurred
+	// Light sensor interrupt
+	if ((LPC_GPIOINT->IO2IntStatF>>5) & 0x1)
+	{
+		obstacleWarning = 1;
+        light_clearIrqStatus();
+        LPC_GPIOINT ->IO2IntClr = 1<<5;
+	}
+
 }
 
 //TIMER 1 Interrupt Handler
@@ -114,26 +136,81 @@ void TIMER1_IRQHandler(void)
 }
 
 void myReadTemp(void) {
-    if (state == 0) {
-    	t1 = getTicks();
-    } else {
-    	t2 = getTicks();
-    }
-    state = !state;
+	if (currentState != 2) {
+		if (state == 0) {
+			t1 = getTicks();
+		} else {
+			t2 = getTicks();
+		}
+		state = !state;
 
-    if (t2 > t1) {
-        period += t2-t1;
-    }
-    else {
-    	period += t1-t2;
-    }
-    count++;
-    if (count == 340) {
-        count = 0;
-        tempFlag = 1;
-        tempReading = ( (1000 * period)/340 - 2731 );
-    	period = 0;
-    }
+		if (t2 > t1) {
+			period += t2-t1;
+		}
+		else {
+			period += t1-t2;
+		}
+		count++;
+		if (count == 340) {
+			count = 0;
+			tempFlag = 1;
+			tempReading = ( (1000 * period)/340 - 2731 );
+			period = 0;
+		}
+	}
+}
+
+static void distanceLED(void){
+
+	int readings = light_value;
+	if(readings>= 0 && readings<250){
+		pca9532_setLeds(0x1,0xFFFF);
+	}
+	else if(readings>= 250 && readings<500){
+		pca9532_setLeds(0x3,0xFFFF);
+	}
+	else if(readings>= 500 && readings<750){
+		pca9532_setLeds(0x7,0xFFFF);
+	}
+	else if(readings>= 750 && readings<1000){
+		pca9532_setLeds(0xF,0xFFFF);
+	}
+	else if(readings>= 1000 && readings<1250){
+		pca9532_setLeds(0x1F,0xFFFF);
+	}
+	else if(readings>= 1250 && readings<1500){
+		pca9532_setLeds(0x3F,0xFFFF);
+	}
+	else if(readings>= 1500 && readings<1750){
+		pca9532_setLeds(0x7F,0xFFFF);
+	}
+	else if(readings>= 1750 && readings<2000){
+		pca9532_setLeds(0xFFF,0xFFFF);
+	}
+	else if(readings>= 2000 && readings<2250){
+		pca9532_setLeds(0x1FF,0xFFFF);
+	}
+	else if(readings>= 2250 && readings<2500){
+		pca9532_setLeds(0x3FF,0xFFFF);
+	}
+	else if(readings>= 2500 && readings<2750){
+		pca9532_setLeds(0x7FF,0xFFFF);
+	}
+	else if(readings>= 2750 && readings<3000){
+		pca9532_setLeds(0xFFF,0xFFFF);
+	}
+	else if(readings>= 3000 && readings<3250){
+		pca9532_setLeds(0x1FFF,0xFFFF);
+	}
+	else if(readings>= 3250 && readings<3500){
+		pca9532_setLeds(0x3FFF,0xFFFF);
+	}
+	else if(readings>= 3500 && readings<3750){
+		pca9532_setLeds(0x7FFF,0xFFFF);
+	}
+	else if(readings>= 3750 && readings<4000){
+		pca9532_setLeds(0xFFFF,0xFFFF);
+	}
 }
 
 
@@ -338,6 +415,12 @@ static void init_GPIO(void)
 	PinCfg.Pinnum = 31;
 	PINSEL_ConfigPin(&PinCfg); //for SW4
     GPIO_SetDir(1, 1<<31, 0);  //for SW4 to set as input
+
+	PinCfg.Portnum = 2;
+	PinCfg.Pinnum = 5;
+	PINSEL_ConfigPin(&PinCfg); //for P2.5
+	GPIO_SetDir(2, 1<<5, 0);   //for P2.5 to set as interrupt input
+
 }
 
 /*
@@ -351,6 +434,9 @@ static void setup(void) {
 
 	SysTick_Config(SystemCoreClock/1000);
 
+	light_init();
+	light_enable();
+	pca9532_init();
     oled_init();
     acc_init();
     rgb_init();
@@ -367,9 +453,15 @@ static void setup(void) {
     LPC_TIM1->TCR  = (1 <<SBIT_CNTEN);               /* Start timer by setting the Counter Enable*/
     NVIC_EnableIRQ(TIMER1_IRQn);
 
+
+
+    LPC_GPIOINT->IO2IntEnF |= 1<<10; //Enable GPIO Interrupt P2.10 - sw3 int
+    LPC_GPIOINT->IO0IntEnF |= 1<<2;  //Enable GPIO Interrupt P0.2 - temp sensor int
+	LPC_GPIOINT->IO2IntEnF |= 1<<5;  //Enable GPIO Interrupt P2.5 - Light sensor int
+	light_setRange(LIGHT_RANGE_4000);
+	light_setHiThreshold(3000);
+	light_clearIrqStatus();
     NVIC_ClearPendingIRQ(EINT3_IRQn);
-    LPC_GPIOINT->IO2IntEnF |= 1<<10; // Enable GPIO Interrupt P2.10 - sw3 int
-    LPC_GPIOINT->IO0IntEnF |= 1<<2; // Enable GPIO Interrupt P0.2 - temp sensor int
     NVIC_EnableIRQ(EINT3_IRQn);
 
 }
@@ -398,13 +490,20 @@ void stationaryMode(void) {
 
 void launchMode(void) {
 	oled_putString(0, 0, STRING_LAUNCH, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-	led7seg_setChar(get7segChar(countdownCounter), 1);
+	led7seg_setChar(get7segChar(0), 1);
 	my_read_acc();
+}
+
+void returnMode(void) {
+	oled_putString(0, 0, STRING_RETURN, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+	led7seg_setChar(get7segChar(0), 1);
+	light_value = light_read();
+	distanceLED();
 }
 
 static void toggleMode(void) {
 	if (currentState==0) {
-		if (sw3 == 1) {
+		if (sw3 == 1 && tempWarning == 0) {
 			countdownFlag = 1;
 			 //begin the countdownTimer. Only called once, sw3 is set to zero in next line.
 			countdownTimer = getTicks();
@@ -414,47 +513,85 @@ static void toggleMode(void) {
 	}
 	if (currentState == 1) {
 		launchMode();
+		if (sw3 == 1) {
+			uint32_t currentTime = getTicks();
+			if (currentTime - lastPressedTime < 1000) {
+				currentState = 2;
+				oled_putString(0, 10, "        ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				oled_putString(0, 20, "        ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				oled_putString(0, 30, "        ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			}
+			sw3 = 0;
+			lastPressedTime = getTicks();
+		}
+	}
+	if (currentState == 2) {
+		returnMode();
+		if (sw3 == 1) {
+			currentState = 0;
+			pca9532_setLeds(0x0,0xFFFF);
+			oled_putString(0, 20, "             ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+		}
 	}
 }
 
 void checkWarnings(void) {
-	char temp_char[40];
-
-	//show tempReading on led if tempFlag is 1
-	if (tempFlag == 1) {
-		tempFlag = 0;
-    	sprintf(temp_char, "%.2f", tempReading/10.0);
-    	oled_putString(0, 10, temp_char, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-    	if (tempReading >= TEMP_THRESHOLD) {
-    		countdownFlag = 0; //abort countdownFlag
-    		countdownCounter = 15; //reset counter to display 'F' on 7 seg
-    		oled_putString(0, 40, tempWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-    		tempWarning = 1;
-    	}
+	//checking for warnings in STATIONARY or RETURN mode
+	if (currentState == 0 || currentState == 1) {
+		char temp_char[40];
+		//show tempReading on led if tempFlag is 1
+		if (tempFlag == 1) {
+			tempFlag = 0;
+			sprintf(temp_char, "%.2f", tempReading/10.0);
+			oled_putString(0, 10, temp_char, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			if (tempReading >= TEMP_THRESHOLD) {
+				countdownFlag = 0; //abort countdownFlag
+				countdownCounter = 15; //reset counter to display 'F' on 7 seg
+				oled_putString(0, 40, tempWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				tempWarning = 1;
+			}
+		}
+		if (offCourseWarning == 1) {
+			oled_putString(0, 50, accWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+		}
+		if (tempWarning == 1 && offCourseWarning == 0) {
+			if (toggleRGB == 0) {
+				my_rgb_setLeds(0x00);
+			}
+			if (toggleRGB == 1) {
+				my_rgb_setLeds(RGB_RED);
+			}
+		} else if (tempWarning == 1 && offCourseWarning == 1) {
+			if (toggleRGB == 0) {
+				my_rgb_setLeds(RGB_BLUE);
+			}
+			if (toggleRGB == 1) {
+				my_rgb_setLeds(RGB_RED);
+			}
+		} else if (tempWarning == 0 && offCourseWarning == 1) {
+			if (toggleRGB == 0) {
+				my_rgb_setLeds(RGB_BLUE);
+			}
+			if (toggleRGB == 1) {
+				my_rgb_setLeds(0);
+			}
+		}
 	}
-	if (offCourseWarning == 1) {
-		oled_putString(0, 50, accWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-	}
-	if (tempWarning == 1 && offCourseWarning == 0) {
-		if (toggleRGB == 0) {
-			my_rgb_setLeds(0x00);
-		}
-		if (toggleRGB == 1) {
-			my_rgb_setLeds(RGB_RED);
-		}
-	} else if (tempWarning == 1 && offCourseWarning == 1) {
-		if (toggleRGB == 0) {
-			my_rgb_setLeds(RGB_BLUE);
-		}
-		if (toggleRGB == 1) {
-			my_rgb_setLeds(RGB_RED);
-		}
-	} else if (tempWarning == 0 && offCourseWarning == 1) {
-		if (toggleRGB == 0) {
-			my_rgb_setLeds(RGB_BLUE);
-		}
-		if (toggleRGB == 1) {
-			my_rgb_setLeds(0);
+	//only in return mode
+	if (currentState == 2) {
+		char light_reading[40];
+		sprintf(light_reading,"%d",light_value);
+		strcat(light_reading, "  ");
+		if (obstacleWarning == 1) {
+			oled_putString(0, 30, lightWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			obstacleWarning = 0;
+			clearLightWarningFlag = 1;
+		} else {
+			if (clearLightWarningFlag == 1) {
+				oled_putString(0, 30, "              ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				clearLightWarningFlag = 0;
+			}
+			oled_putString(0, 20, light_reading, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		}
 	}
 }
