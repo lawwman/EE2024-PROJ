@@ -85,6 +85,7 @@ int RPTFlag = 0;
 uint8_t tenSecTempMsg[] = "Temp : ";
 uint8_t tenSecAccXMsg[] = "; ACC X : ";
 uint8_t tenSecAccYMsg[] = ", Y : ";
+uint8_t tenSecLightMsg[] = "Obstacle distance: ";
 
 /////////////////////FOR TEMP READ///////////////////////
 int tempFlag = 0; //whether there is enough readings to print on OLED
@@ -747,6 +748,16 @@ void checkWarnings(void) {
 				clearLightWarningFlag = 0;
 			}
 			oled_putString(0, 20, light_reading, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+		}
+		if (tenSecFlag) {
+			tenSecFlag = !tenSecFlag;
+			uint8_t tenSecMsg[25];
+			uint8_t light_reading2[6];
+			sprintf(light_reading2,"%d",light_value);
+			strcpy(tenSecMsg, tenSecLightMsg);
+			strcat(tenSecMsg, light_reading2);
+			strcat(tenSecMsg, " \r\n");
+			UART_Send(LPC_UART3, (uint8_t *)tenSecMsg, strlen(tenSecMsg), BLOCKING);
 		}
 	}
 }
