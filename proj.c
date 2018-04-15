@@ -106,7 +106,8 @@ uint8_t STRING_LAUNCH[] = "LAUNCH";
 uint8_t STRING_RETURN[] = "RETURN";
 uint8_t tempWarningMsg[] = "Temp. Too high. \r\n";
 uint8_t accWarningMsg[] = "Veer off course. \r\n";
-uint8_t lightWarningMsg[] = "Obstacle near. \r\n";
+uint8_t lightWarningMsg[] = "Obstacle Near. \r\n";
+uint8_t lightSafeMsg[] = "Obstacle Avoided. \r\n";
 
 static uint8_t uart_stationary[] = "Entering STATIONARY Mode \r\n";
 static uint8_t uart_launch[] = "Entering LAUNCH Mode \r\n";
@@ -683,11 +684,13 @@ void checkWarnings(void) {
 		strcat(light_reading, "  ");
 		if (obstacleWarning == 1) {
 			oled_putString(0, 30, lightWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			UART_Send(LPC_UART3, (uint8_t *)lightWarningMsg, strlen(lightWarningMsg), BLOCKING);
 			obstacleWarning = 0;
 			clearLightWarningFlag = 1;
 		} else {
 			if (clearLightWarningFlag == 1) {
 				oled_putString(0, 30, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				UART_Send(LPC_UART3, (uint8_t *)lightSafeMsg, strlen(lightSafeMsg), BLOCKING);
 				clearLightWarningFlag = 0;
 			}
 			oled_putString(0, 20, light_reading, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
@@ -698,6 +701,7 @@ void checkWarnings(void) {
 //SW4 pressed once (for now in any mode) will clear the oled screen.
 void clearWarnings(void) {
 	if (((GPIO_ReadValue(1) >> 31) & 0x01) == 0) {
+		oled_putString(0, 10, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		oled_putString(0, 40, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		oled_putString(0, 50, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		tempWarning = 0;
