@@ -36,6 +36,12 @@ volatile uint32_t msTicks;
 #define SBIT_MR0I    0
 #define SBIT_MR0R    1
 #define SBIT_CNTEN   0
+#define PCLK_TIMER1  4
+
+//for timer 0 interrupt
+#define SBIT_TIMER0  1
+#define PCLK_TIMER0  2
+int tenSecFlag = 0;
 
 /*
  * States
@@ -182,6 +188,16 @@ void TIMER1_IRQHandler(void)
     isrMask = LPC_TIM1->IR;
     LPC_TIM1->IR = isrMask;         /* Clear the Interrupt Bit */
     toggleRGB = !toggleRGB;
+}
+
+void TIMER0_IRQHandler(void)
+{
+    unsigned int isrMask;
+
+    isrMask = LPC_TIM0->IR;
+    LPC_TIM0->IR = isrMask;         /* Clear the Interrupt Bit */
+    tenSecFlag = 1;
+
 }
 
 static void distanceLED(void){
@@ -550,13 +566,19 @@ static void setup(void) {
 
     SystemInit();
 
-    LPC_SC->PCONP |= (1<<SBIT_TIMER1);
+    LPC_SC->PCONP |= (1<<SBIT_TIMER0) | (1<<SBIT_TIMER1); /* Power ON Timer0,1 */
 
     LPC_TIM1->MCR  = (1<<SBIT_MR0I) | (1<<SBIT_MR0R);/* Clear TC on MR0 match and Generate Interrupt*/
-    LPC_TIM1->PR   = getPrescalarForUs(4);;          /* Prescalar for 1ms */
-    LPC_TIM1->MR0  = 333 * 1000;                     /* Load timer value to generate 100ms delay*/
+    LPC_TIM1->PR   = getPrescalarForUs(PCLK_TIMER1);;          /* Prescalar for 1ms */
+    LPC_TIM1->MR0  = 333 * 1000;                     /* Load timer value to generate 333ms delay*/
     LPC_TIM1->TCR  = (1 <<SBIT_CNTEN);               /* Start timer by setting the Counter Enable*/
     NVIC_EnableIRQ(TIMER1_IRQn);
+
+    LPC_TIM0->MCR  = (1<<SBIT_MR0I) | (1<<SBIT_MR0R);     /* Clear TC on MR0 match and Generate Interrupt*/
+    LPC_TIM0->PR   = getPrescalarForUs(PCLK_TIMER0);      /* Prescalar for 1us */
+    LPC_TIM0->MR0  = 10000 * 1000;                        /* Load timer value to generate 10s delay*/
+    LPC_TIM0->TCR  = (1 <<SBIT_CNTEN);                    /* Start timer by setting the Counter Enable*/
+    NVIC_EnableIRQ(TIMER0_IRQn);
 
     init_uart();
     setUartInt();
@@ -695,6 +717,10 @@ void checkWarnings(void) {
 			}
 			oled_putString(0, 20, light_reading, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		}
+	}
+	if (tenSecFlag) {
+		tenSecFlag = !tenSecFlag;
+		UART_Send(LPC_UART3, (uint8_t *)lightSafeMsg, strlen(lightSafeMsg), BLOCKING);
 	}
 }
 
