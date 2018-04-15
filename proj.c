@@ -27,7 +27,7 @@
 #define RGB_RED   0x01
 #define RGB_BLUE  0x02
 #define OBSTACLE_NEAR_THRESHOLD 3000
-#define TEMP_THRESHOLD 270
+#define TEMP_THRESHOLD 276
 
 volatile uint32_t msTicks;
 
@@ -80,6 +80,11 @@ uint8_t teraterm[4];   // To check against intMsg
 uint8_t intMsg[4] = {'R', 'P', 'T', '\0'};
 
 uint32_t isReceived = 0;  // Init to be not received
+int RPTFlag = 0;
+
+uint8_t tenSecTempMsg[] = "Temp : ";
+uint8_t tenSecAccXMsg[] = "; ACC X : ";
+uint8_t tenSecAccYMsg[] = ", Y : ";
 
 /////////////////////FOR TEMP READ///////////////////////
 int tempFlag = 0; //whether there is enough readings to print on OLED
@@ -319,6 +324,9 @@ void my_read_acc(void ) {
 
     sprintf(Xvalue, "%.2f", x/9.8);
     sprintf(Yvalue, "%.2f", y/9.8);
+
+    if (x < 0) x *= -1;
+    if (y < 0) y *= -1;
 
     if (x/1.0 > 3.92 || y/1.0 > 3.92) {
     	offCourseWarning = 1;
@@ -698,6 +706,29 @@ void checkWarnings(void) {
 			}
 		}
 		toggle_rgb(); //toggle RGB to show red or blue blinking
+		if (tenSecFlag == 1 && currentState == 1) {
+			tenSecFlag = !tenSecFlag;
+			acc_read(&x, &y, &z);
+		    x = x+xoff;
+		    y = y+yoff;
+		    char Xvalue[5];
+		    char Yvalue[5];
+		    sprintf(Xvalue, "%.2f", x/9.8);
+		    sprintf(Yvalue, "%.2f", y/9.8);
+
+		    uint8_t temp_char2[5];
+		    sprintf(temp_char2, "%.2f", tempReading/10.0);
+
+			uint8_t tenSecMsg[30];
+			strcpy(tenSecMsg, tenSecTempMsg);
+			strcat(tenSecMsg, temp_char2);
+			strcat(tenSecMsg, tenSecAccXMsg);
+			strcat(tenSecMsg, Xvalue);
+			strcat(tenSecMsg, tenSecAccYMsg);
+			strcat(tenSecMsg, Yvalue);
+			strcat(tenSecMsg, " \r\n");
+			UART_Send(LPC_UART3, (uint8_t *)tenSecMsg, strlen(tenSecMsg), BLOCKING);
+		}
 	}
 	//only in return mode
 	if (currentState == 2) {
@@ -717,10 +748,6 @@ void checkWarnings(void) {
 			}
 			oled_putString(0, 20, light_reading, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		}
-	}
-	if (tenSecFlag) {
-		tenSecFlag = !tenSecFlag;
-		UART_Send(LPC_UART3, (uint8_t *)lightSafeMsg, strlen(lightSafeMsg), BLOCKING);
 	}
 }
 
@@ -754,11 +781,9 @@ int main (void) {
     	clearWarnings();
     	if (isReceived == 1) {
     		isReceived = 0;
-    		printf("%s\n", teraterm);
     		if(strcmp(teraterm, intMsg) == 0){
-    			printf("set flag\n");
+    			RPTFlag = 1;
     		}
-    		printf("%d\n", rev_cnt);
     	}
     }
 }
