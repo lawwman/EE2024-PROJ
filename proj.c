@@ -707,8 +707,9 @@ void checkWarnings(void) {
 			}
 		}
 		toggle_rgb(); //toggle RGB to show red or blue blinking
-		if (tenSecFlag == 1 && currentState == 1) {
-			tenSecFlag = !tenSecFlag;
+		if ((tenSecFlag == 1 && currentState == 1) || (RPTFlag == 1 && currentState == 1)) {
+			tenSecFlag = 0;
+			RPTFlag = 0;
 			acc_read(&x, &y, &z);
 		    x = x+xoff;
 		    y = y+yoff;
@@ -749,8 +750,9 @@ void checkWarnings(void) {
 			}
 			oled_putString(0, 20, light_reading, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		}
-		if (tenSecFlag) {
-			tenSecFlag = !tenSecFlag;
+		if (tenSecFlag == 1 || RPTFlag == 1) {
+			tenSecFlag = 0;
+			RPTFlag = 0;
 			uint8_t tenSecMsg[25];
 			uint8_t light_reading2[6];
 			sprintf(light_reading2,"%d",light_value);
