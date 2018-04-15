@@ -1,0 +1,379 @@
+/*****************************************************************************
+ *   A demo example using several of the peripherals on the base board
+ *
+ *   Copyright(C) 2011, EE2024
+ *   All rights reserved.
+ *
+ ******************************************************************************/
+
+#include <string.h>
+#include <stdio.h>
+#include "lpc17xx_pinsel.h"
+#include "lpc17xx_ssp.h"
+#include "lpc17xx_i2c.h"
+#include "lpc17xx_timer.h"
+#include "lpc17xx_uart.h"
+#include "lpc17xx_gpio.h"
+
+#include "temp.h"
+#include "oled.h"
+#include "acc.h"
+#include "led7seg.h"
+#include "rgb.h"
+#include "light.h"
+#include "pca9532.h"
+
+volatile uint32_t msTicks;
+
+//for timer 1 interrupt
+#define SBIT_TIMER1  2
+#define SBIT_MR0I    0
+#define SBIT_MR0R    1
+#define SBIT_CNTEN   0
+#define PCLK_TIMER1  4
+
+#define threshold1 0.3
+#define threshold2 0.5
+#define threshold3 1.1
+#define threshold4 1.8
+
+int frameRate = 0;
+
+int32_t xoff = 0;
+int32_t yoff = 0;
+int8_t x = 0;
+int8_t y = 0;
+int8_t z = 0;
+
+float xSpeed = 0;
+
+int8_t xTip = 30;
+int8_t yTip = 10;
+
+int8_t xM1 = 70;
+int8_t yM1 = 53;
+int8_t m1Spd = 7;
+
+int8_t xM2 = 20;
+int8_t yM2 = 55;
+int8_t m2Spd = 7;
+
+int8_t xM3 = 40;
+int8_t yM3 = 55;
+int8_t m3Spd = 7;
+
+int randCounter = 0;
+
+void SysTick_Handler(void) { msTicks++; }
+
+uint32_t getTicks(void){ return msTicks; }
+
+//TIMER 1 Interrupt Handler
+void TIMER1_IRQHandler(void)
+{
+    unsigned int isrMask;
+
+    isrMask = LPC_TIM1->IR;
+    LPC_TIM1->IR = isrMask;         /* Clear the Interrupt Bit */
+    frameRate = 1;
+}
+
+
+unsigned int getPrescalarForUs(uint8_t timerPclkBit)
+{
+    unsigned int pclk,prescalarForUs;
+    pclk = (LPC_SC->PCLKSEL0 >> timerPclkBit) & 0x03;  /* get the pclk info for required timer */
+
+    switch ( pclk )                                    /* Decode the bits to determine the pclk*/
+    {
+    case 0x00:
+        pclk = SystemCoreClock/4;
+        break;
+
+    case 0x01:
+        pclk = SystemCoreClock;
+        break;
+
+    case 0x02:
+        pclk = SystemCoreClock/2;
+        break;
+
+    case 0x03:
+        pclk = SystemCoreClock/8;
+        break;
+
+    default:
+        pclk = SystemCoreClock/4;
+        break;
+    }
+
+    prescalarForUs =pclk/1000000 - 1;                    /* Prescalar for 1us (1000000Counts/sec) */
+
+    return prescalarForUs;
+}
+
+static void readAcc(void) {
+	acc_read(&x, &y, &z);
+    x = x+xoff;
+    y = y+yoff;
+    xSpeed = x/9.8;
+}
+
+static void drawShuttle(color) {
+    oled_putPixel(xTip, yTip, color);
+    //create tip of shuttle
+    oled_line(xTip - 1, yTip - 1, xTip + 1, yTip - 1, color);
+    oled_line(xTip - 1, yTip - 2, xTip + 1, yTip - 2, color);
+    oled_line(xTip - 1, yTip - 3, xTip + 1, yTip - 3, color);
+    oled_line(xTip, yTip - 5, xTip, yTip - 6, color);
+
+
+    //create body of shuttle
+    oled_line(xTip - 2, yTip - 4, xTip - 2, yTip - 10, color);
+    oled_line(xTip + 2, yTip - 4, xTip + 2, yTip - 10, color);
+    oled_line(xTip - 2, yTip - 11, xTip + 2, yTip - 11, color);
+    oled_line(xTip, yTip - 9, xTip, yTip - 12, color);
+
+    //create thruster
+    oled_putPixel(xTip - 3, yTip - 10, color);
+    oled_putPixel(xTip - 3, yTip - 13, color);
+    oled_putPixel(xTip + 3, yTip - 10, color);
+    oled_putPixel(xTip + 3, yTip - 13, color);
+    oled_line(xTip - 4, yTip - 9, xTip - 4, yTip - 13, color);
+    oled_line(xTip  +4, yTip - 9, xTip + 4, yTip - 13, color);
+}
+
+void drawMeteor(uint8_t xM, uint8_t yM, uint8_t color) {
+	oled_line(xM -1, yM, xM + 1, yM, color);
+	oled_putPixel(xM + 2, yM + 1, color);
+	oled_line(xM + 3, yM + 2, xM + 3, yM + 4, color);
+	oled_line(xM + 2, yM + 5, xM, yM + 5, color);
+	oled_line(xM, yM + 5, xM, yM + 3, color);
+	oled_putPixel(xM - 1, yM + 3, color);
+	oled_line(xM - 2, yM + 2, xM - 2, yM, color);
+}
+
+void checkParameters(void) {
+	if (xTip > 91) xTip = 91;
+	if (xTip < 5) xTip = 5;
+	if (yTip > 64) yTip = 64;
+	if (yTip < 14) yTip = 14;
+}
+
+static void meteorMovementLogic(void) {
+	//clear old frame
+	drawMeteor(xM1, yM1, OLED_COLOR_BLACK);
+	yM1 -= m1Spd;
+	if (yM1 < 0) {
+		yM1 = 55;
+		if (randCounter == 0) {
+			xM1 = (xM1 + 40) % 90 + 2;
+			m1Spd = (m1Spd + 11) % 11 + 5;
+		}
+		if (randCounter == 1) {
+			xM1 = (xM1 + 45) % 90 + 2;
+			m1Spd = (m1Spd + 5) % 11 + 4;
+		}
+		if (randCounter == 2) {
+			xM1 = (xM1 + 25) % 90 + 2;
+			m1Spd = (m1Spd + 3) % 11 + 4;
+		}
+	}
+	drawMeteor(xM1, yM1, OLED_COLOR_WHITE);
+
+	drawMeteor(xM2, yM2, OLED_COLOR_BLACK);
+	yM2 -= m2Spd;
+	if (yM2 < 0) {
+		yM2 = 55;
+		if (randCounter == 0) {
+			xM2 = (xM2 + 46) % 90 + 2;
+			m2Spd = (m2Spd + 3) % 11 + 3;
+		}
+		if (randCounter == 1) {
+			xM2 = (xM2 + 23) % 90 + 2;
+			m2Spd = (m2Spd + 7) % 11 + 2;
+		}
+		if (randCounter == 2) {
+			xM2 = (xM2 + 89) % 90 + 2;
+			m2Spd = (m2Spd + 9) % 16 + 3;
+		}
+	}
+	drawMeteor(xM2, yM2, OLED_COLOR_WHITE);
+
+	drawMeteor(xM3, yM3, OLED_COLOR_BLACK);
+	yM3 -= m3Spd;
+	if (yM3 < 0) {
+		yM3 = 55;
+		if (randCounter == 0) {
+			xM3 = (xM3 + 23) % 90 + 2;
+			m3Spd = (m3Spd + 2) % 11 + 3;
+		}
+		if (randCounter == 1) {
+			xM3 = (xM3 + 34) % 90 + 2;
+			m3Spd = (m3Spd + 7) % 7 + 5;
+		}
+		if (randCounter == 2) {
+			xM3 = (xM3 + 45) % 90 + 2;
+			m3Spd = (m3Spd + 4) % 12 + 5;
+		}
+	}
+	drawMeteor(xM3, yM3, OLED_COLOR_WHITE);
+	randCounter = (randCounter + 1) % 3;
+}
+
+static void movementLogic(void) {
+	int direction = 0;
+	int pixelToInc = 0;
+	//clear old frame
+	drawShuttle(OLED_COLOR_BLACK);
+
+	//checkSpeed
+	readAcc();
+	if (xSpeed > 0) {
+		direction = 1; //left
+	} else {
+		direction = 2; //right
+		xSpeed *= -1;
+	}
+	if (xSpeed > threshold4)  pixelToInc = 15;
+	else if (xSpeed > threshold3) pixelToInc = 9;
+	else if (xSpeed > threshold2)  pixelToInc = 3;
+	else if (xSpeed > threshold1)  pixelToInc = 1;
+	else if (xSpeed <= threshold1) pixelToInc = 0;
+
+	if (direction == 1) xTip -= pixelToInc;
+	if (direction == 2) xTip += pixelToInc;
+
+	checkParameters();
+	//draw new shuttle
+	drawShuttle(OLED_COLOR_WHITE);
+}
+
+static void init_ssp(void)
+{
+	SSP_CFG_Type SSP_ConfigStruct;
+	PINSEL_CFG_Type PinCfg;
+
+	/*
+	 * Initialize SPI pin connect
+	 * P0.7 - SCK;
+	 * P0.8 - MISO
+	 * P0.9 - MOSI
+	 * P2.2 - SSEL - used as GPIO
+	 */
+	PinCfg.Funcnum = 2;
+	PinCfg.OpenDrain = 0;
+	PinCfg.Pinmode = 0;
+	PinCfg.Portnum = 0;
+	PinCfg.Pinnum = 7;
+	PINSEL_ConfigPin(&PinCfg);
+	PinCfg.Pinnum = 8;
+	PINSEL_ConfigPin(&PinCfg);
+	PinCfg.Pinnum = 9;
+	PINSEL_ConfigPin(&PinCfg);
+	PinCfg.Funcnum = 0;
+	PinCfg.Portnum = 2;
+	PinCfg.Pinnum = 2;
+	PINSEL_ConfigPin(&PinCfg);
+
+	SSP_ConfigStructInit(&SSP_ConfigStruct);
+
+	// Initialize SSP peripheral with parameter given in structure above
+	SSP_Init(LPC_SSP1, &SSP_ConfigStruct);
+
+	// Enable SSP peripheral
+	SSP_Cmd(LPC_SSP1, ENABLE);
+
+}
+
+static void init_i2c(void)
+{
+	PINSEL_CFG_Type PinCfg;
+
+	/* Initialize I2C2 pin connect */
+	PinCfg.Funcnum = 2;
+	PinCfg.Pinnum = 10;
+	PinCfg.Portnum = 0;
+	PINSEL_ConfigPin(&PinCfg);
+	PinCfg.Pinnum = 11;
+	PINSEL_ConfigPin(&PinCfg);
+
+	// Initialize I2C peripheral
+	I2C_Init(LPC_I2C2, 100000);
+
+	/* Enable I2C1 operation */
+	I2C_Cmd(LPC_I2C2, ENABLE);
+}
+
+void setup() {
+	init_ssp();
+	init_i2c();
+
+    oled_init();
+    acc_init();
+
+	SysTick_Config(SystemCoreClock/1000);
+    SystemInit();
+
+    LPC_SC->PCONP |= 1<<SBIT_TIMER1; /* Power ON Timer0,1 */
+
+    LPC_TIM1->MCR  = (1<<SBIT_MR0I) | (1<<SBIT_MR0R);/* Clear TC on MR0 match and Generate Interrupt*/
+    LPC_TIM1->PR   = getPrescalarForUs(PCLK_TIMER1);;          /* Prescalar for 1ms */
+    LPC_TIM1->MR0  = 333 * 1000;                     /* Load timer value to generate 333ms delay*/
+    LPC_TIM1->TCR  = (1 <<SBIT_CNTEN);               /* Start timer by setting the Counter Enable*/
+    NVIC_EnableIRQ(TIMER1_IRQn);
+    /*
+     * Assume base board in zero-g position when reading first value.
+     */
+    acc_read(&x, &y, &z);
+    xoff = 0-x;
+    yoff = 0-y;
+
+    oled_clearScreen(OLED_COLOR_BLACK);
+}
+
+int main (void) {
+	setup();
+	drawShuttle(OLED_COLOR_WHITE);
+	drawMeteor(xM1, yM1,OLED_COLOR_WHITE);
+	int dieFlag = 0;
+
+    while (1)
+    {
+    	//one frame
+    	if (frameRate && dieFlag == 0) {
+    		int checker1 = xM1 - xTip;
+    		if (checker1 <= 5 && checker1 >= -3 && yM1 <= yTip) {
+    			dieFlag = 1;
+    		}
+    		int checker2 = xM2 - xTip;
+    		if (checker2 <= 5 && checker2 >= -3 && yM2 <= yTip) {
+    			dieFlag = 1;
+    		}
+    		int checker3 = xM3 - xTip;
+    		if (checker3 <= 5 && checker3 >= -3 && yM3 <= yTip) {
+    			dieFlag = 1;
+    		}
+    		frameRate = 0;
+    		movementLogic();
+    		meteorMovementLogic();
+
+    	}
+    	if (dieFlag == 1) {
+    		oled_putString(0, 50, "Game Over", OLED_COLOR_WHITE,
+    				OLED_COLOR_BLACK);
+    	}
+    }
+
+
+}
+
+void check_failed(uint8_t *file, uint32_t line)
+{
+	/* User can add his own implementation to report the file name and line number,
+	 ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+
+	/* Infinite loop */
+	while(1);
+}
+
