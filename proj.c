@@ -27,13 +27,9 @@
 #define RGB_RED   0x01
 #define RGB_BLUE  0x02
 #define OBSTACLE_NEAR_THRESHOLD 3000
-#define TEMP_THRESHOLD 360
+#define TEMP_THRESHOLD 270
 
 volatile uint32_t msTicks;
-
-static uint8_t uart_stationary[] = "Entering STATIONARY Mode \r\n";
-static uint8_t uart_launch[] = "Entering LAUNCH Mode \r\n";
-static uint8_t uart_return[] = "Entering RETURN Mode \r\n";
 
 //for timer 1 interrupt
 #define SBIT_TIMER1  2
@@ -57,12 +53,21 @@ int tempWarning = 0;
 int offCourseWarning = 0;
 int obstacleWarning = 0;
 
+/*
+ * Flags to send warning message to Uart.
+ * Only send msg to Uart once when it gets the warning.
+ * Send again when warning is cleared.
+ */
+int uartTempFlag = 1;
+int uartAccFlag = 1;
+int uartLightFlag = 1;
+
 int clearWarningFlag = 0;
 /////////////////////FOR COUNTDOWN///////////////////////
 uint32_t countdownTimer = 0;
 int countdownCounter = 15;
 
-/////////////////////FOR UART///////////////////////
+/////////////////////FOR UART INT///////////////////////
 uint8_t rev_buf[4];    // Reception buffer
 uint32_t rev_cnt = 0;  // Reception counter
 uint8_t teraterm[4];   // To check against intMsg
@@ -95,13 +100,19 @@ int8_t z = 0;
 uint32_t light_value = 0;
 int clearLightWarningFlag = 0;
 
-//string values for modes
+///////////////////////string values for modes///////////////////////////
 uint8_t STRING_STATIONARY[] = "STATIONARY";
 uint8_t STRING_LAUNCH[] = "LAUNCH";
 uint8_t STRING_RETURN[] = "RETURN";
-uint8_t tempWarningMsg[] = "Temp. Too high";
-uint8_t accWarningMsg[] = "Veer off course";
-uint8_t lightWarningMsg[] = "Obstacle near";
+uint8_t tempWarningMsg[] = "Temp. Too high. \r\n";
+uint8_t accWarningMsg[] = "Veer off course. \r\n";
+uint8_t lightWarningMsg[] = "Obstacle near. \r\n";
+
+static uint8_t uart_stationary[] = "Entering STATIONARY Mode \r\n";
+static uint8_t uart_launch[] = "Entering LAUNCH Mode \r\n";
+static uint8_t uart_return[] = "Entering RETURN Mode \r\n";
+
+uint8_t blankLine[] = "                    ";
 
 void SysTick_Handler(void) { msTicks++; }
 
@@ -345,6 +356,31 @@ void my_rgb_setLeds (uint8_t ledMask)
     }
 }
 
+void toggle_rgb(void) {
+	if (tempWarning == 1 && offCourseWarning == 0) {
+		if (toggleRGB == 0) {
+			my_rgb_setLeds(0x00);
+		}
+		if (toggleRGB == 1) {
+			my_rgb_setLeds(RGB_RED);
+		}
+	} else if (tempWarning == 1 && offCourseWarning == 1) {
+		if (toggleRGB == 0) {
+			my_rgb_setLeds(RGB_BLUE);
+		}
+		if (toggleRGB == 1) {
+			my_rgb_setLeds(RGB_RED);
+		}
+	} else if (tempWarning == 0 && offCourseWarning == 1) {
+		if (toggleRGB == 0) {
+			my_rgb_setLeds(RGB_BLUE);
+		}
+		if (toggleRGB == 1) {
+			my_rgb_setLeds(0);
+		}
+	}
+}
+
 unsigned int getPrescalarForUs(uint8_t timerPclkBit)
 {
     unsigned int pclk,prescalarForUs;
@@ -580,7 +616,7 @@ static void toggleMode(void) {
 			sw3 = 0; //reset the flag
 		}
 		uint32_t test = getTicks();
-		if (test > 500 && test < 510) {
+		if (test > 500 && test < 530) {
 		    UART_Send(LPC_UART3, (uint8_t *)uart_stationary , strlen(uart_stationary), BLOCKING);
 		}
 		stationaryMode();
@@ -590,10 +626,11 @@ static void toggleMode(void) {
 		if (sw3 == 1) {
 			uint32_t currentTime = getTicks();
 			if (currentTime - lastPressedTime < 1000) {
+				UART_Send(LPC_UART3, (uint8_t *)uart_return , strlen(uart_return), BLOCKING);
 				currentState = 2;
-				oled_putString(0, 10, "        ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-				oled_putString(0, 20, "        ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-				oled_putString(0, 30, "        ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				oled_putString(0, 10, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				oled_putString(0, 20, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				oled_putString(0, 30, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 			}
 			sw3 = 0;
 			lastPressedTime = getTicks();
@@ -603,8 +640,9 @@ static void toggleMode(void) {
 		returnMode();
 		if (sw3 == 1) {
 			currentState = 0;
+			UART_Send(LPC_UART3, (uint8_t *)uart_stationary , strlen(uart_stationary), BLOCKING);
 			pca9532_setLeds(0x0,0xFFFF);
-			oled_putString(0, 20, "             ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			oled_putString(0, 20, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		}
 	}
 }
@@ -623,33 +661,20 @@ void checkWarnings(void) {
 				countdownCounter = 15; //reset counter to display 'F' on 7 seg
 				oled_putString(0, 40, tempWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 				tempWarning = 1;
+				if (uartTempFlag) {
+					UART_Send(LPC_UART3, (uint8_t *)tempWarningMsg, strlen(tempWarningMsg), BLOCKING);
+					uartTempFlag = 0; //flag is set to 1 again when warnings are cleared by sw4
+				}
 			}
 		}
 		if (offCourseWarning == 1) {
 			oled_putString(0, 50, accWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-		}
-		if (tempWarning == 1 && offCourseWarning == 0) {
-			if (toggleRGB == 0) {
-				my_rgb_setLeds(0x00);
-			}
-			if (toggleRGB == 1) {
-				my_rgb_setLeds(RGB_RED);
-			}
-		} else if (tempWarning == 1 && offCourseWarning == 1) {
-			if (toggleRGB == 0) {
-				my_rgb_setLeds(RGB_BLUE);
-			}
-			if (toggleRGB == 1) {
-				my_rgb_setLeds(RGB_RED);
-			}
-		} else if (tempWarning == 0 && offCourseWarning == 1) {
-			if (toggleRGB == 0) {
-				my_rgb_setLeds(RGB_BLUE);
-			}
-			if (toggleRGB == 1) {
-				my_rgb_setLeds(0);
+			if (uartAccFlag) {
+				UART_Send(LPC_UART3, (uint8_t *)accWarningMsg, strlen(accWarningMsg), BLOCKING);
+				uartAccFlag = 0; //flag is set to 1 again when warnings are cleared by sw4
 			}
 		}
+		toggle_rgb(); //toggle RGB to show red or blue blinking
 	}
 	//only in return mode
 	if (currentState == 2) {
@@ -662,7 +687,7 @@ void checkWarnings(void) {
 			clearLightWarningFlag = 1;
 		} else {
 			if (clearLightWarningFlag == 1) {
-				oled_putString(0, 30, "              ", OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				oled_putString(0, 30, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 				clearLightWarningFlag = 0;
 			}
 			oled_putString(0, 20, light_reading, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
@@ -673,9 +698,12 @@ void checkWarnings(void) {
 //SW4 pressed once (for now in any mode) will clear the oled screen.
 void clearWarnings(void) {
 	if (((GPIO_ReadValue(1) >> 31) & 0x01) == 0) {
-		oled_clearScreen(OLED_COLOR_BLACK);
+		oled_putString(0, 40, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+		oled_putString(0, 50, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		tempWarning = 0;
 		offCourseWarning = 0;
+		uartTempFlag = 1;
+		uartAccFlag = 1;
 		my_rgb_setLeds(0x00);
 	}
 }
