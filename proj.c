@@ -660,9 +660,8 @@ static void toggleMode(void) {
 			if (currentTime - lastPressedTime < 1000) {
 				UART_Send(LPC_UART3, (uint8_t *)uart_return , strlen(uart_return), BLOCKING);
 				currentState = 2;
-				oled_putString(0, 10, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-				oled_putString(0, 20, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-				oled_putString(0, 30, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+				clearWarningFlag = 1;
+				oled_clearScreen(OLED_COLOR_BLACK);
 			}
 			sw3 = 0;
 			lastPressedTime = getTicks();
@@ -672,6 +671,7 @@ static void toggleMode(void) {
 		returnMode();
 		if (sw3 == 1) {
 			currentState = 0;
+			clearWarningFlag = 1;
 			UART_Send(LPC_UART3, (uint8_t *)uart_stationary , strlen(uart_stationary), BLOCKING);
 			pca9532_setLeds(0x0,0xFFFF);
 			oled_putString(0, 20, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
@@ -766,10 +766,11 @@ void checkWarnings(void) {
 
 //SW4 pressed once (for now in any mode) will clear the oled screen.
 void clearWarnings(void) {
-	if (((GPIO_ReadValue(1) >> 31) & 0x01) == 0) {
+	if ((((GPIO_ReadValue(1) >> 31) & 0x01) == 0) || clearWarningFlag == 1) {
 		oled_putString(0, 10, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		oled_putString(0, 40, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 		oled_putString(0, 50, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+		clearWarningFlag = 0;
 		tempWarning = 0;
 		offCourseWarning = 0;
 		uartTempFlag = 1;
