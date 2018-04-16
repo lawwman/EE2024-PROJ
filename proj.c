@@ -27,7 +27,7 @@
 #define RGB_RED   0x01
 #define RGB_BLUE  0x02
 #define OBSTACLE_NEAR_THRESHOLD 3000
-#define TEMP_THRESHOLD 276
+#define TEMP_THRESHOLD 366
 
 volatile uint32_t msTicks;
 
@@ -78,6 +78,7 @@ uint8_t rev_buf[4];    // Reception buffer
 uint32_t rev_cnt = 0;  // Reception counter
 uint8_t teraterm[4];   // To check against intMsg
 uint8_t intMsg[4] = {'R', 'P', 'T', '\0'};
+uint8_t intManMsg[4] = {'M', 'A', 'N', '\0'};
 
 uint32_t isReceived = 0;  // Init to be not received
 int RPTFlag = 0;
@@ -115,6 +116,7 @@ int clearLightWarningFlag = 0;
 ///////////////////////string values for modes///////////////////////////
 uint8_t STRING_STATIONARY[] = "STATIONARY";
 uint8_t STRING_LAUNCH[] = "LAUNCH";
+uint8_t STRING_MANUAL[] = "MANUAL";
 uint8_t STRING_RETURN[] = "RETURN";
 uint8_t tempWarningMsg[] = "Temp. Too high. \r\n";
 uint8_t accWarningMsg[] = "Veer off course. \r\n";
@@ -124,8 +126,35 @@ uint8_t lightSafeMsg[] = "Obstacle Avoided. \r\n";
 static uint8_t uart_stationary[] = "Entering STATIONARY Mode \r\n";
 static uint8_t uart_launch[] = "Entering LAUNCH Mode \r\n";
 static uint8_t uart_return[] = "Entering RETURN Mode \r\n";
+static uint8_t uart_manual[] = "Entering MANUAL Mode \r\n";
 
 uint8_t blankLine[] = "                    ";
+
+/////////////////////SPECIAL FEATURE///////////////////////////////////////
+#define threshold1 0.3
+#define threshold2 0.5
+#define threshold3 1.1
+#define threshold4 1.8
+
+int frameRate = 0;
+
+float xSpeed = 0;
+
+int8_t xTip = 30;
+int8_t yTip = 10;
+
+int8_t xM1 = 70;
+int8_t yM1 = 53;
+int8_t m1Spd = 7;
+int8_t xM2 = 20;
+int8_t yM2 = 55;
+int8_t m2Spd = 7;
+int8_t xM3 = 40;
+int8_t yM3 = 55;
+int8_t m3Spd = 7;
+int randCounter = 0;
+int manFlag = 0;
+int dieFlag = 0;
 
 void SysTick_Handler(void) { msTicks++; }
 
@@ -194,6 +223,7 @@ void TIMER1_IRQHandler(void)
     isrMask = LPC_TIM1->IR;
     LPC_TIM1->IR = isrMask;         /* Clear the Interrupt Bit */
     toggleRGB = !toggleRGB;
+    frameRate = 1;
 }
 
 void TIMER0_IRQHandler(void)
@@ -313,6 +343,143 @@ uint32_t get7segChar(int number) {
 		break;
 	}
 	return toReturn;
+}
+
+static void readAcc(void) {
+	acc_read(&x, &y, &z);
+    x = x+xoff;
+    y = y+yoff;
+    xSpeed = x/9.8;
+}
+
+static void drawShuttle(color) {
+    oled_putPixel(xTip, yTip, color);
+    //create tip of shuttle
+    oled_line(xTip - 1, yTip - 1, xTip + 1, yTip - 1, color);
+    oled_line(xTip - 1, yTip - 2, xTip + 1, yTip - 2, color);
+    oled_line(xTip - 1, yTip - 3, xTip + 1, yTip - 3, color);
+    oled_line(xTip, yTip - 5, xTip, yTip - 6, color);
+
+
+    //create body of shuttle
+    oled_line(xTip - 2, yTip - 4, xTip - 2, yTip - 10, color);
+    oled_line(xTip + 2, yTip - 4, xTip + 2, yTip - 10, color);
+    oled_line(xTip - 2, yTip - 11, xTip + 2, yTip - 11, color);
+    oled_line(xTip, yTip - 9, xTip, yTip - 12, color);
+
+    //create thruster
+    oled_putPixel(xTip - 3, yTip - 10, color);
+    oled_putPixel(xTip - 3, yTip - 13, color);
+    oled_putPixel(xTip + 3, yTip - 10, color);
+    oled_putPixel(xTip + 3, yTip - 13, color);
+    oled_line(xTip - 4, yTip - 9, xTip - 4, yTip - 13, color);
+    oled_line(xTip  +4, yTip - 9, xTip + 4, yTip - 13, color);
+}
+
+void drawMeteor(uint8_t xM, uint8_t yM, uint8_t color) {
+	oled_line(xM -1, yM, xM + 1, yM, color);
+	oled_putPixel(xM + 2, yM + 1, color);
+	oled_line(xM + 3, yM + 2, xM + 3, yM + 4, color);
+	oled_line(xM + 2, yM + 5, xM, yM + 5, color);
+	oled_line(xM, yM + 5, xM, yM + 3, color);
+	oled_putPixel(xM - 1, yM + 3, color);
+	oled_line(xM - 2, yM + 2, xM - 2, yM, color);
+}
+
+void checkParameters(void) {
+	if (xTip > 91) xTip = 91;
+	if (xTip < 5) xTip = 5;
+	if (yTip > 64) yTip = 64;
+	if (yTip < 14) yTip = 14;
+}
+
+static void meteorMovementLogic(void) {
+	//clear old frame
+	drawMeteor(xM1, yM1, OLED_COLOR_BLACK);
+	yM1 -= m1Spd;
+	if (yM1 < 0) {
+		yM1 = 55;
+		if (randCounter == 0) {
+			xM1 = (xM1 + 40) % 90 + 2;
+			m1Spd = (m1Spd + 11) % 11 + 5;
+		}
+		if (randCounter == 1) {
+			xM1 = (xM1 + 45) % 90 + 2;
+			m1Spd = (m1Spd + 5) % 11 + 4;
+		}
+		if (randCounter == 2) {
+			xM1 = (xM1 + 25) % 90 + 2;
+			m1Spd = (m1Spd + 3) % 11 + 4;
+		}
+	}
+	drawMeteor(xM1, yM1, OLED_COLOR_WHITE);
+
+	drawMeteor(xM2, yM2, OLED_COLOR_BLACK);
+	yM2 -= m2Spd;
+	if (yM2 < 0) {
+		yM2 = 55;
+		if (randCounter == 0) {
+			xM2 = (xM2 + 46) % 90 + 2;
+			m2Spd = (m2Spd + 3) % 11 + 3;
+		}
+		if (randCounter == 1) {
+			xM2 = (xM2 + 23) % 90 + 2;
+			m2Spd = (m2Spd + 7) % 11 + 2;
+		}
+		if (randCounter == 2) {
+			xM2 = (xM2 + 89) % 90 + 2;
+			m2Spd = (m2Spd + 9) % 16 + 3;
+		}
+	}
+	drawMeteor(xM2, yM2, OLED_COLOR_WHITE);
+
+	drawMeteor(xM3, yM3, OLED_COLOR_BLACK);
+	yM3 -= m3Spd;
+	if (yM3 < 0) {
+		yM3 = 55;
+		if (randCounter == 0) {
+			xM3 = (xM3 + 23) % 90 + 2;
+			m3Spd = (m3Spd + 2) % 11 + 3;
+		}
+		if (randCounter == 1) {
+			xM3 = (xM3 + 34) % 90 + 2;
+			m3Spd = (m3Spd + 7) % 7 + 5;
+		}
+		if (randCounter == 2) {
+			xM3 = (xM3 + 45) % 90 + 2;
+			m3Spd = (m3Spd + 4) % 12 + 5;
+		}
+	}
+	drawMeteor(xM3, yM3, OLED_COLOR_WHITE);
+	randCounter = (randCounter + 1) % 3;
+}
+
+static void movementLogic(void) {
+	int direction = 0;
+	int pixelToInc = 0;
+	//clear old frame
+	drawShuttle(OLED_COLOR_BLACK);
+
+	//checkSpeed
+	readAcc();
+	if (xSpeed > 0) {
+		direction = 1; //left
+	} else {
+		direction = 2; //right
+		xSpeed *= -1;
+	}
+	if (xSpeed > threshold4)  pixelToInc = 15;
+	else if (xSpeed > threshold3) pixelToInc = 9;
+	else if (xSpeed > threshold2)  pixelToInc = 3;
+	else if (xSpeed > threshold1)  pixelToInc = 1;
+	else if (xSpeed <= threshold1) pixelToInc = 0;
+
+	if (direction == 1) xTip -= pixelToInc;
+	if (direction == 2) xTip += pixelToInc;
+
+	checkParameters();
+	//draw new shuttle
+	drawShuttle(OLED_COLOR_WHITE);
 }
 
 void my_read_acc(void ) {
@@ -603,7 +770,50 @@ static void setup(void) {
 
 }
 
+void checkTempWarning(void) {
+	uint8_t temp_char[40];
+	//show tempReading on led if tempFlag is 1
+	if (tempFlag == 1) {
+		tempFlag = 0;
+		sprintf(temp_char, "%.2f", tempReading/10.0);
+		oled_putString(0, 10, temp_char, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+		if (tempReading >= TEMP_THRESHOLD) {
+			countdownFlag = 0; //abort countdownFlag
+			countdownCounter = 15; //reset counter to display 'F' on 7 seg
+			oled_putString(0, 40, tempWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			tempWarning = 1;
+			if (uartTempFlag) {
+				UART_Send(LPC_UART3, (uint8_t *)tempWarningMsg, strlen(tempWarningMsg), BLOCKING);
+				uartTempFlag = 0; //flag is set to 1 again when warnings are cleared by sw4
+			}
+		}
+	}
+}
+
+void checkAccWarning(void) {
+	if (offCourseWarning == 1) {
+		oled_putString(0, 50, accWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+		if (uartAccFlag) {
+			UART_Send(LPC_UART3, (uint8_t *)accWarningMsg, strlen(accWarningMsg), BLOCKING);
+			uartAccFlag = 0; //flag is set to 1 again when warnings are cleared by sw4
+		}
+	}
+}
+
 void stationaryMode(void) {
+	//check if sw3 was pressed and no temp warning
+	if (sw3 == 1 && tempWarning == 0) {
+		countdownFlag = 1;
+		 //begin the countdownTimer. Only called once, sw3 is set to zero in next line.
+		countdownTimer = getTicks();
+		sw3 = 0; //reset the flag
+	}
+	//"Entering STATIONARY MODE" message sent within half sec when system powered on.
+	uint32_t test = getTicks();
+	if (test > 500 && test < 530) {
+	    UART_Send(LPC_UART3, (uint8_t *)uart_stationary , strlen(uart_stationary), BLOCKING);
+	}
+
 	oled_putString(0, 0, STRING_STATIONARY, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 
 	//if countdownFlag raised (by sw3 int), begin countdown
@@ -626,10 +836,67 @@ void stationaryMode(void) {
 
 }
 
+void stationaryModeCheckWarning() {
+	checkTempWarning();
+	toggle_rgb(); //toggle RGB to show red or blue blinking
+}
+
 void launchMode(void) {
 	oled_putString(0, 0, STRING_LAUNCH, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
 	led7seg_setChar(get7segChar(0), 1);
 	my_read_acc();
+
+	//if sw3 was pressed, check duration between sw3 presses
+	if (sw3 == 1) {
+		uint32_t currentTime = getTicks();
+		//if sw3 pressed twice within 1 sec, go to Return mode and clear warnings
+		if (currentTime - lastPressedTime < 1000) {
+			UART_Send(LPC_UART3, (uint8_t *)uart_return , strlen(uart_return), BLOCKING);
+			currentState = 2;
+			clearWarningFlag = 1;
+			oled_clearScreen(OLED_COLOR_BLACK);
+		}
+		sw3 = 0;
+		lastPressedTime = getTicks();
+	}
+	if (manFlag == 1) {
+		manFlag = 0;
+		currentState = 3;
+		oled_clearScreen(OLED_COLOR_BLACK);
+		clearWarningFlag = 1;
+		UART_Send(LPC_UART3, (uint8_t *)uart_manual , strlen(uart_manual), BLOCKING);
+	}
+}
+
+void launchModeCheckWarning(void) {
+	checkTempWarning();
+	checkAccWarning();
+	toggle_rgb(); //toggle RGB to show red or blue blinking
+
+	if (tenSecFlag == 1 || RPTFlag == 1) {
+		tenSecFlag = 0;
+		RPTFlag = 0;
+		acc_read(&x, &y, &z);
+	    x = x+xoff;
+	    y = y+yoff;
+	    char Xvalue[5];
+	    char Yvalue[5];
+	    sprintf(Xvalue, "%.2f", x/9.8);
+	    sprintf(Yvalue, "%.2f", y/9.8);
+
+	    uint8_t temp_char2[5];
+	    sprintf(temp_char2, "%.2f", tempReading/10.0);
+
+		uint8_t tenSecMsg[30];
+		strcpy(tenSecMsg, tenSecTempMsg);
+		strcat(tenSecMsg, temp_char2);
+		strcat(tenSecMsg, tenSecAccXMsg);
+		strcat(tenSecMsg, Xvalue);
+		strcat(tenSecMsg, tenSecAccYMsg);
+		strcat(tenSecMsg, Yvalue);
+		strcat(tenSecMsg, " \r\n");
+		UART_Send(LPC_UART3, (uint8_t *)tenSecMsg, strlen(tenSecMsg), BLOCKING);
+	}
 }
 
 void returnMode(void) {
@@ -637,130 +904,111 @@ void returnMode(void) {
 	led7seg_setChar(get7segChar(0), 1);
 	light_value = light_read();
 	distanceLED();
+
+	//if sw3 interrupt was pressed, proceed to STATIONARY MODE and clear warning
+	if (sw3 == 1) {
+		currentState = 0;
+		clearWarningFlag = 1;
+		UART_Send(LPC_UART3, (uint8_t *)uart_stationary , strlen(uart_stationary), BLOCKING);
+		pca9532_setLeds(0x0,0xFFFF);
+		oled_putString(0, 20, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+	}
+}
+
+void returnModeCheckWarning(void) {
+	uint8_t light_reading[40];
+	sprintf(light_reading,"%d",light_value);
+	strcat(light_reading, "  ");
+	if (obstacleWarning == 1) {
+		oled_putString(0, 30, lightWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+		UART_Send(LPC_UART3, (uint8_t *)lightWarningMsg, strlen(lightWarningMsg), BLOCKING);
+		obstacleWarning = 0;
+		clearLightWarningFlag = 1;
+	} else {
+		if (clearLightWarningFlag == 1) {
+			oled_putString(0, 30, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+			UART_Send(LPC_UART3, (uint8_t *)lightSafeMsg, strlen(lightSafeMsg), BLOCKING);
+			clearLightWarningFlag = 0;
+		}
+		oled_putString(0, 20, light_reading, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+	}
+	if (tenSecFlag == 1 || RPTFlag == 1) {
+		tenSecFlag = 0;
+		RPTFlag = 0;
+		uint8_t tenSecMsg[25];
+		uint8_t light_reading2[6];
+		sprintf(light_reading2,"%d",light_value);
+		strcpy(tenSecMsg, tenSecLightMsg);
+		strcat(tenSecMsg, light_reading2);
+		strcat(tenSecMsg, " \r\n");
+		UART_Send(LPC_UART3, (uint8_t *)tenSecMsg, strlen(tenSecMsg), BLOCKING);
+	}
+}
+
+void manualMode(void) {
+	oled_putString(0, 0, STRING_MANUAL, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
+	//one frame
+	if (frameRate && dieFlag == 0) {
+		int checker1 = xM1 - xTip;
+		if (checker1 <= 5 && checker1 >= -3 && yM1 <= yTip) {
+			dieFlag = 1;
+		}
+		int checker2 = xM2 - xTip;
+		if (checker2 <= 5 && checker2 >= -3 && yM2 <= yTip) {
+			dieFlag = 1;
+		}
+		int checker3 = xM3 - xTip;
+		if (checker3 <= 5 && checker3 >= -3 && yM3 <= yTip) {
+			dieFlag = 1;
+		}
+		frameRate = 0;
+		movementLogic();
+		meteorMovementLogic();
+	}
+	if (dieFlag == 1) {
+   		oled_putString(0, 50, "You died", OLED_COLOR_WHITE,
+    				OLED_COLOR_BLACK);
+	}
+	if (sw3 == 1 && dieFlag == 0) {
+		sw3 = 0;
+		currentState = 1;
+		clearWarningFlag = 1;
+		UART_Send(LPC_UART3, (uint8_t *)uart_launch , strlen(uart_launch), BLOCKING);
+		oled_clearScreen(OLED_COLOR_BLACK);
+	}
 }
 
 static void toggleMode(void) {
 	if (currentState==0) {
-		if (sw3 == 1 && tempWarning == 0) {
-			countdownFlag = 1;
-			 //begin the countdownTimer. Only called once, sw3 is set to zero in next line.
-			countdownTimer = getTicks();
-			sw3 = 0; //reset the flag
-		}
-		uint32_t test = getTicks();
-		if (test > 500 && test < 530) {
-		    UART_Send(LPC_UART3, (uint8_t *)uart_stationary , strlen(uart_stationary), BLOCKING);
-		}
 		stationaryMode();
 	}
 	if (currentState == 1) {
 		launchMode();
-		if (sw3 == 1) {
-			uint32_t currentTime = getTicks();
-			if (currentTime - lastPressedTime < 1000) {
-				UART_Send(LPC_UART3, (uint8_t *)uart_return , strlen(uart_return), BLOCKING);
-				currentState = 2;
-				clearWarningFlag = 1;
-				oled_clearScreen(OLED_COLOR_BLACK);
-			}
-			sw3 = 0;
-			lastPressedTime = getTicks();
-		}
 	}
 	if (currentState == 2) {
 		returnMode();
-		if (sw3 == 1) {
-			currentState = 0;
-			clearWarningFlag = 1;
-			UART_Send(LPC_UART3, (uint8_t *)uart_stationary , strlen(uart_stationary), BLOCKING);
-			pca9532_setLeds(0x0,0xFFFF);
-			oled_putString(0, 20, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-		}
+	}
+	if (currentState ==3) {
+		manualMode();
 	}
 }
 
 void checkWarnings(void) {
 	//checking for warnings in STATIONARY or RETURN mode
-	if (currentState == 0 || currentState == 1) {
-		uint8_t temp_char[40];
-		//show tempReading on led if tempFlag is 1
-		if (tempFlag == 1) {
-			tempFlag = 0;
-			sprintf(temp_char, "%.2f", tempReading/10.0);
-			oled_putString(0, 10, temp_char, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-			if (tempReading >= TEMP_THRESHOLD) {
-				countdownFlag = 0; //abort countdownFlag
-				countdownCounter = 15; //reset counter to display 'F' on 7 seg
-				oled_putString(0, 40, tempWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-				tempWarning = 1;
-				if (uartTempFlag) {
-					UART_Send(LPC_UART3, (uint8_t *)tempWarningMsg, strlen(tempWarningMsg), BLOCKING);
-					uartTempFlag = 0; //flag is set to 1 again when warnings are cleared by sw4
-				}
-			}
-		}
-		if (offCourseWarning == 1) {
-			oled_putString(0, 50, accWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-			if (uartAccFlag) {
-				UART_Send(LPC_UART3, (uint8_t *)accWarningMsg, strlen(accWarningMsg), BLOCKING);
-				uartAccFlag = 0; //flag is set to 1 again when warnings are cleared by sw4
-			}
-		}
-		toggle_rgb(); //toggle RGB to show red or blue blinking
-		if ((tenSecFlag == 1 && currentState == 1) || (RPTFlag == 1 && currentState == 1)) {
-			tenSecFlag = 0;
-			RPTFlag = 0;
-			acc_read(&x, &y, &z);
-		    x = x+xoff;
-		    y = y+yoff;
-		    char Xvalue[5];
-		    char Yvalue[5];
-		    sprintf(Xvalue, "%.2f", x/9.8);
-		    sprintf(Yvalue, "%.2f", y/9.8);
-
-		    uint8_t temp_char2[5];
-		    sprintf(temp_char2, "%.2f", tempReading/10.0);
-
-			uint8_t tenSecMsg[30];
-			strcpy(tenSecMsg, tenSecTempMsg);
-			strcat(tenSecMsg, temp_char2);
-			strcat(tenSecMsg, tenSecAccXMsg);
-			strcat(tenSecMsg, Xvalue);
-			strcat(tenSecMsg, tenSecAccYMsg);
-			strcat(tenSecMsg, Yvalue);
-			strcat(tenSecMsg, " \r\n");
-			UART_Send(LPC_UART3, (uint8_t *)tenSecMsg, strlen(tenSecMsg), BLOCKING);
-		}
+	if (currentState == 0) {
+		stationaryModeCheckWarning();
 	}
+
+	if (currentState == 1) {
+		launchModeCheckWarning();
+	}
+
 	//only in return mode
 	if (currentState == 2) {
-		uint8_t light_reading[40];
-		sprintf(light_reading,"%d",light_value);
-		strcat(light_reading, "  ");
-		if (obstacleWarning == 1) {
-			oled_putString(0, 30, lightWarningMsg, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-			UART_Send(LPC_UART3, (uint8_t *)lightWarningMsg, strlen(lightWarningMsg), BLOCKING);
-			obstacleWarning = 0;
-			clearLightWarningFlag = 1;
-		} else {
-			if (clearLightWarningFlag == 1) {
-				oled_putString(0, 30, blankLine, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-				UART_Send(LPC_UART3, (uint8_t *)lightSafeMsg, strlen(lightSafeMsg), BLOCKING);
-				clearLightWarningFlag = 0;
-			}
-			oled_putString(0, 20, light_reading, OLED_COLOR_WHITE, OLED_COLOR_BLACK);
-		}
-		if (tenSecFlag == 1 || RPTFlag == 1) {
-			tenSecFlag = 0;
-			RPTFlag = 0;
-			uint8_t tenSecMsg[25];
-			uint8_t light_reading2[6];
-			sprintf(light_reading2,"%d",light_value);
-			strcpy(tenSecMsg, tenSecLightMsg);
-			strcat(tenSecMsg, light_reading2);
-			strcat(tenSecMsg, " \r\n");
-			UART_Send(LPC_UART3, (uint8_t *)tenSecMsg, strlen(tenSecMsg), BLOCKING);
-		}
+		returnModeCheckWarning();
+	}
+	if (currentState == 3) {
+		//do nothing
 	}
 }
 
@@ -776,6 +1024,13 @@ void clearWarnings(void) {
 		uartTempFlag = 1;
 		uartAccFlag = 1;
 		my_rgb_setLeds(0x00);
+		if (currentState == 3 && dieFlag == 1) {
+			currentState = 0;
+			countdownCounter = 15;
+			dieFlag = 0;
+			oled_clearScreen(OLED_COLOR_BLACK);
+			UART_Send(LPC_UART3, (uint8_t *)uart_stationary , strlen(uart_stationary), BLOCKING);
+		}
 	}
 }
 
@@ -797,6 +1052,9 @@ int main (void) {
     		isReceived = 0;
     		if(strcmp(teraterm, intMsg) == 0){
     			RPTFlag = 1;
+    		}
+    		if((strcmp(teraterm, intManMsg) == 0) && currentState == 1){
+    			manFlag = 1;
     		}
     	}
     }
